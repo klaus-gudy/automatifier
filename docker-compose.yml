@@ -1,0 +1,53 @@
+# Host ports are shifted off the defaults on purpose — 5440 rather than 5432,
+# 5683 rather than 5672 — so a Postgres or RabbitMQ someone already runs
+# locally, jarvis's included, does not collide with this one.
+#
+#   postgres://localhost:5440   — what DATABASE_* points at
+#   amqp://localhost:5683       — what RABBITMQ_URL points at
+#   http://localhost:15683      — management UI, guest/guest
+services:
+  postgres:
+    image: postgres:16
+    container_name: automatifier-db
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: automatifier
+
+    ports:
+      - '5440:5432'
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d automatifier']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: automatifier-mq
+
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+    ports:
+      - '5683:5672'
+      - '15683:15672'
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  postgres_data:
+  rabbitmq_data:

@@ -1,0 +1,140 @@
+import {
+  CallHandler,
+  ExecutionContext,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NestInterceptor,
+  StreamableFile,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Request, Response } from 'express';
+import { Observable, tap, throwError } from 'rxjs';
+import { catchError } from 'rxjs/operators';
+
+import { describePayload, SEPARATOR } from '@/common/logging/log-format';
+
+/**
+ * Paths that are polled rather than called.
+ *
+ * `/health` is hit every 30s by the container's `HEALTHCHECK` and by whatever
+ * orchestrator is watching it. Logging those would bury every real request
+ * under a wall of noise within minutes, which defeats the point of a log you
+ * are meant to read.
+ */
+const SILENT_PATHS = ['/health'];
+
+/**
+ * Logs every HTTP request, its response, and anything thrown along the way.
+ *
+ * **HTTP only.** An interceptor never sees a queue delivery — `RabbitmqService`
+ * logs those itself, in the same layout, via `log-format.ts`.
+ *
+ * `catchError` also sees failures raised by pipes (a `ValidationPipe` 400
+ * arrives here), because pipes run inside the interceptor's observable. It does
+ * **not** see failures from guards or middleware, which run before interceptors
+ * are reached; there are none in this app today, and an exception filter is the
+ * thing that would cover them if that changes.
+ */
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  private readonly logger = new Logger('HTTP');
+
+  constructor(private readonly config: ConfigService) {}
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    // A non-HTTP execution context has no request to describe. Cheap to check,
+    // and it keeps this from throwing if the app ever gains a microservice
+    // transport.
+    if (context.getType() !== 'http') return next.handle();
+
+    const http = context.switchToHttp();
+    const request = http.getRequest<Request>();
+    const response = http.getResponse<Response>();
+
+    const { method, originalUrl } = request;
+
+    if (SILENT_PATHS.some((path) => originalUrl.startsWith(path))) {
+      return next.handle();
+    }
+
+    const startedAt = Date.now();
+
+    this.logger.log(`\n${SEPARATOR}`);
+    this.logger.log(`[INCOMING REQUEST] ${method} ${originalUrl}`);
+    this.logger.log(
+      `  from: ${request.ip ?? 'unknown'}  agent: ${request.get('user-agent') ?? '—'}`,
+    );
+
+    const body = this.describeBody(request.body);
+    if (body) this.logger.log(`  body: ${body}`);
+
+    return next.handle().pipe(
+      tap((data) => {
+        const elapsed = Date.now() - startedAt;
+        this.logger.log(
+          `[RESPONSE] ${method} ${originalUrl} ${response.statusCode} +${elapsed}ms`,
+        );
+        this.logger.log(`  returned: ${this.describeResponse(data)}`);
+        this.logger.log(`${SEPARATOR}\n`);
+      }),
+      catchError((error: unknown) => {
+        const elapsed = Date.now() - startedAt;
+        const status =
+          error instanceof HttpException
+            ? error.getStatus()
+            : HttpStatus.INTERNAL_SERVER_ERROR;
+
+        this.logger.error(
+          `[ERROR] ${method} ${originalUrl} ${status} +${elapsed}ms`,
+        );
+        this.logger.error(
+          `  ${error instanceof Error ? error.message : String(error)}`,
+        );
+
+        // An HttpException carries a structured body — a ValidationPipe's list
+        // of what was wrong with the request, which is the useful part.
+        if (error instanceof HttpException) {
+          this.logger.error(`  detail: ${JSON.stringify(error.getResponse())}`);
+        } else if (error instanceof Error && error.stack) {
+          // Only for genuinely unexpected failures. A 400 does not need a
+          // stack trace; a TypeError does.
+          this.logger.error(error.stack);
+        }
+
+        this.logger.error(`${SEPARATOR}\n`);
+
+        // Rethrown, not swallowed: this observes, it does not handle. Nest's
+        // exception layer still owns what the caller actually receives.
+        return throwError(() => error);
+      }),
+    );
+  }
+
+  /**
+   * A request body, redacted and truncated, or null when there is nothing to
+   * show — or when `LOG_REQUEST_BODY` is off, which it is by default.
+   */
+  private describeBody(body: unknown): string | null {
+    if (!this.config.get<boolean>('app.logRequestBody')) return null;
+    if (!body || typeof body !== 'object') return null;
+    if (Object.keys(body).length === 0) return null;
+
+    return describePayload(body);
+  }
+
+  /**
+   * What the handler returned, summarised.
+   *
+   * Binary is described, never printed: dumping a file stream into a terminal
+   * would be megabytes of mojibake per request.
+   */
+  private describeResponse(data: unknown): string {
+    if (data instanceof StreamableFile) return 'StreamableFile (binary stream)';
+    if (Buffer.isBuffer(data)) return `Buffer (${data.byteLength} bytes)`;
+    if (data === undefined || data === null) return 'no body';
+
+    return describePayload(data);
+  }
+}

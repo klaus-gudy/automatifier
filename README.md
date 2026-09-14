@@ -1,98 +1,105 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Automatifier
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A NestJS service wired to Postgres (TypeORM) and RabbitMQ, with request and
+message logging and a dependency-aware health probe.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
-
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Running it
 
 ```bash
-$ npm install
+cp .env.example .env
+docker compose up -d      # Postgres on 5440, RabbitMQ on 5683 (UI: 15683)
+npm install
+npm run start:dev
 ```
 
-## Compile and run the project
+- API — `http://localhost:3000/api/v1`
+- Health — `http://localhost:3000/health`
+- Docs — `http://localhost:3000/docs`
+
+The host ports are shifted off the defaults on purpose, so a Postgres or
+RabbitMQ already running locally does not collide with this one.
+
+Set `RABBITMQ_ENABLED=false` to run the HTTP side with no broker at all.
+
+## Layout
+
+```
+src/
+  config/          One registerAs namespace per concern (app, database, rabbitmq)
+  common/          Logging interceptor, log formatting, health types
+  database/        TypeORM wiring, migrations, the CLI data source
+  messaging/       The broker connection. Transport only — it knows no features
+  modules/         Features. health/ is the only one so far
+  configure-app.ts Prefix + validation, shared by main.ts and the e2e test
+  swagger.ts       OpenAPI document
+```
+
+Import through the `@/` alias (`@/messaging/rabbitmq.service`), not relative
+paths. The one exception is `src/database/data-source.ts`, which runs under the
+TypeORM CLI outside the alias resolver.
+
+## Adding a feature that consumes events
+
+`MessagingModule` is infrastructure: import it where you need it rather than
+making it global, so the dependency stays visible in the module that has it.
+
+```ts
+@Injectable()
+export class ThingListener implements OnModuleInit {
+  constructor(private readonly rabbitmq: RabbitmqService) {}
+
+  async onModuleInit() {
+    await this.rabbitmq.subscribe(
+      { queue: 'AUTOMATIFIER_THING_QUEUE', routingKeys: ['thing.created'] },
+      async (payload) => {
+        // Throw to retry once, then dead-letter. Return to ack.
+      },
+    );
+  }
+}
+```
+
+A queue is _who consumes_ — caps, named for the listener. A routing key is
+_what happened_ — lower-case dotted. They are different things, and naming the
+queue after the event is what makes them look like one.
+
+Acknowledgement is owned by `RabbitmqService`, not the listener:
+
+| Handler does        | Message goes                               |
+| ------------------- | ------------------------------------------ |
+| returns             | acked                                      |
+| throws, first time  | requeued once                              |
+| throws, redelivered | dead-lettered to `<QUEUE>_DEAD`            |
+| body is not JSON    | dead-lettered immediately, handler skipped |
+
+The retry limit uses the broker's own `redelivered` flag rather than an
+in-memory counter, so it survives a restart of this process.
+
+## Migrations
+
+Schema changes go through migrations only — `synchronize` is off.
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run migration:generate -- src/database/migrations/AddSomething
+npm run migration:run
+npm run migration:revert
 ```
 
-## Run tests
+`DATABASE_MIGRATIONS_RUN` runs pending migrations at boot. Fine for one
+process; turn it off and run `migration:run` as a deploy step once this has
+replicas, or two instances starting together will race.
+
+## Logging
+
+`LoggingInterceptor` logs every HTTP request, response and error;
+`RabbitmqService` logs every delivery in the same layout. Both redact
+credential-shaped keys and truncate long payloads (`common/logging/log-format.ts`).
+
+Request bodies are off by default — set `LOG_REQUEST_BODY=true` to include them.
+
+## Tests
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm test          # unit
+npm run test:e2e  # needs `docker compose up -d` — it connects for real
 ```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
