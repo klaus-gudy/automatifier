@@ -14,6 +14,11 @@ as part of feature work.
       log; left untouched.
 - [ ] **Writing dates into jarvis's `timestamp` columns is not handled.** The
       UTC fix covers reads only. Needed before this service writes a date.
+- [ ] **Decide how "days left" should count.** It is exact time rounded down,
+      as jarvis does: on 2026-09-15 at 23:35 EAT a lease ending 2026-09-27 has
+      11 days left, where counting calendar dates gives 12. jarvis stores end
+      dates at 00:00 UTC (03:00 EAT), so every lease's count drops by one at
+      03:00 EAT. Keep this, or count calendar days in EAT?
 - [ ] **Next increment** — to be decided.
 
 ## Log
