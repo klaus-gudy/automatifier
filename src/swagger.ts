@@ -23,6 +23,7 @@ export function setupSwagger(app: INestApplication) {
     .setTitle('Automatifier')
     .setVersion('0.0.1')
     .addTag('health', 'Liveness and dependency probing')
+    .addTag('leases', "Read-only views over jarvis's leases")
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {

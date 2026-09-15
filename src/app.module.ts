@@ -8,6 +8,7 @@ import databaseConfig from '@/config/database.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 import { DatabaseModule } from '@/database/database.module';
 import { HealthModule } from '@/modules/health/health.module';
+import { LeasesModule } from '@/modules/leases/leases.module';
 
 /**
  * The root module wires features together and owns no logic of its own.
@@ -33,6 +34,7 @@ import { HealthModule } from '@/modules/health/health.module';
     }),
     DatabaseModule,
     HealthModule,
+    LeasesModule,
   ],
   providers: [
     /*

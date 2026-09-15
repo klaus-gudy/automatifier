@@ -1,4 +1,26 @@
+import { types } from 'pg';
 import { DataSourceOptions } from 'typeorm';
+
+/*
+ * jarvis stores every timestamp as UTC in `timestamp without time zone`. By
+ * default `pg` parses that type as *local* time, so on a machine at +03:00 a
+ * lease ending at midnight UTC comes back as 21:00 the day before — every date
+ * off by the process's UTC offset, and by a different amount on a server that
+ * runs in UTC, which is what makes it hard to notice.
+ *
+ * Appending `Z` makes the value parse as the UTC it actually is. Set here,
+ * at module load, because this file is imported by both the Nest runtime and
+ * the TypeORM CLI. `types` is process-global in `pg`, so this applies to every
+ * pool in the process — correct for as long as every zone-less timestamp this
+ * service reads is UTC.
+ *
+ * Reads only. Writing a `Date` into such a column would still be serialised in
+ * local time; that needs its own fix before this service writes one.
+ */
+types.setTypeParser(
+  types.builtins.TIMESTAMP,
+  (value) => new Date(`${value.replace(' ', 'T')}Z`),
+);
 
 export interface DatabaseSettings {
   url: string;
