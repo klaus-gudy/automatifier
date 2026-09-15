@@ -19,9 +19,31 @@ as part of feature work.
       11 days left, where counting calendar dates gives 12. jarvis stores end
       dates at 00:00 UTC (03:00 EAT), so every lease's count drops by one at
       03:00 EAT. Keep this, or count calendar days in EAT?
+- [ ] **Scan runs once per process.** Two replicas would each scan at 08:00.
+      Harmless while it only logs; needs a lock or a single scheduler instance
+      before the scan sends anything.
 - [ ] **Next increment** — to be decided.
 
 ## Log
+
+### 2026-09-15 — Daily lease expiry scan at 08:00 Tanzania time (uncommitted)
+
+- `LeaseExpiryScanService` runs a scheduled scan — the same query as
+  `GET /api/v1/leases/expiring` — and logs every matching lease as one block
+  per run (`[LEASE EXPIRY SCAN]` … `[SCANNED] n lease(s)`).
+- Schedule from `LEASE_EXPIRY_SCAN_CRON` (default `0 8 * * *`) read in
+  `LEASE_EXPIRY_SCAN_TIMEZONE` (default `Africa/Dar_es_Salaam`, i.e. 05:00 UTC).
+  An unparseable expression or unknown zone fails at boot.
+- New endpoint `POST /api/v1/leases/expiring/scan` runs the scan immediately
+  and returns `{ trigger, scannedAt, nextScheduledRunAt, windowDays, leases }`.
+- A failed scheduled scan logs one error and waits for the next day; it never
+  crashes the process.
+- Added `@nestjs/schedule` and `cron`; `ScheduleModule.forRoot()` in
+  `AppModule`. `@nestjs/schedule` is held at `^6.1.3` (as in notifier), not
+  12.x: 12 ships as ES modules only, and Jest's CommonJS setup here cannot load
+  it — every test suite importing `AppModule` fails to run.
+- Local `.env`: `LEASE_EXPIRY_SCAN_CRON="0 8 * * *"`,
+  `LEASE_EXPIRY_SCAN_TIMEZONE=Africa/Dar_es_Salaam`.
 
 ### 2026-09-15 — Response shape back to `windowDays` + `leases` (uncommitted)
 
