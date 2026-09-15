@@ -65,3 +65,27 @@ export class ExpiringLeasesResponseDto {
   })
   leases: ExpiringLeaseDto[];
 }
+
+export type LeaseExpiryScanTrigger = 'scheduled' | 'manual';
+
+export class LeaseExpiryScanResultDto extends ExpiringLeasesResponseDto {
+  @ApiProperty({
+    example: 'manual',
+    enum: ['scheduled', 'manual'],
+    description:
+      '"scheduled" when the daily job ran it, "manual" when it was ' +
+      'requested through the API.',
+  })
+  trigger: LeaseExpiryScanTrigger;
+
+  @ApiProperty({ example: '2026-09-16T05:00:00.012Z' })
+  scannedAt: Date;
+
+  @ApiProperty({
+    example: '2026-09-17T05:00:00.000Z',
+    description:
+      'When the scheduled scan runs next, in UTC — 05:00Z is 08:00 in ' +
+      'Africa/Dar_es_Salaam.',
+  })
+  nextScheduledRunAt: Date;
+}

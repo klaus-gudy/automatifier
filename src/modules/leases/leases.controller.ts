@@ -1,9 +1,20 @@
-import { Controller, Get, HttpStatus, Inject } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Post,
+} from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import leaseConfig from '@/config/lease.config';
-import { ExpiringLeasesResponseDto } from '@/modules/leases/dto/expiring-leases-response.dto';
+import {
+  ExpiringLeasesResponseDto,
+  LeaseExpiryScanResultDto,
+} from '@/modules/leases/dto/expiring-leases-response.dto';
+import { LeaseExpiryScanService } from '@/modules/leases/lease-expiry-scan.service';
 import { LeasesService } from '@/modules/leases/leases.service';
 
 @ApiTags('leases')
@@ -11,6 +22,7 @@ import { LeasesService } from '@/modules/leases/leases.service';
 export class LeasesController {
   constructor(
     private readonly leases: LeasesService,
+    private readonly scanner: LeaseExpiryScanService,
     @Inject(leaseConfig.KEY)
     private readonly config: ConfigType<typeof leaseConfig>,
   ) {}
@@ -42,5 +54,29 @@ export class LeasesController {
       windowDays,
       leases: await this.leases.findExpiring(windowDays),
     };
+  }
+
+  /**
+   * Runs the scheduled scan immediately, through exactly the same code path,
+   * so it can be exercised without waiting for 08:00.
+   *
+   * `POST`, not `GET`, although it changes no data: a scan is an action with
+   * an effect (today a block in the log, later notices sent), and a `GET` is
+   * something browsers prefetch, crawlers follow and proxies retry freely.
+   * `200` rather than `POST`'s default `201`, because nothing is created.
+   */
+  @Post('expiring/scan')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Run the lease expiry scan now',
+    description:
+      'Runs the same scan the daily schedule runs (LEASE_EXPIRY_SCAN_CRON in ' +
+      'LEASE_EXPIRY_SCAN_TIMEZONE, 08:00 Africa/Dar_es_Salaam by default): ' +
+      'finds the expiring leases, logs them, and returns what it found plus ' +
+      'when the scheduled scan runs next.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: LeaseExpiryScanResultDto })
+  scan(): Promise<LeaseExpiryScanResultDto> {
+    return this.scanner.scan('manual');
   }
 }

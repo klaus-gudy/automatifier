@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
 import appConfig from '@/config/app.config';
@@ -34,6 +35,12 @@ import { LeasesModule } from '@/modules/leases/leases.module';
       cache: true,
     }),
     DatabaseModule,
+    /*
+     * At the root for the same reason as `DatabaseModule`: `forRoot` sets up
+     * the one scheduler for the whole process. Features register their own
+     * jobs into it through `SchedulerRegistry` — see `LeaseExpiryScanService`.
+     */
+    ScheduleModule.forRoot(),
     HealthModule,
     LeasesModule,
   ],

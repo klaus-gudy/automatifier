@@ -22,4 +22,26 @@ export default registerAs('lease', () => ({
   expiryDays: [...new Set(integerListEnv('LEASE_EXPIRY_DAYS', [24, 1]))].sort(
     (a, b) => b - a,
   ),
+
+  /**
+   * When the scheduled expiry scan runs, as a cron expression — five fields
+   * (`minute hour day month weekday`), or six with seconds first. Daily at
+   * 08:00 by default.
+   *
+   * An expression `cron` cannot parse fails at boot, when the job is
+   * registered, rather than on the morning it was meant to run.
+   */
+  expiryScanCron: process.env.LEASE_EXPIRY_SCAN_CRON?.trim() || '0 8 * * *',
+
+  /**
+   * The IANA time zone `expiryScanCron` is read in — not the machine's.
+   *
+   * Named explicitly because "08:00" otherwise means whatever zone the process
+   * happens to run in: this laptop is EAT, a container is usually UTC, and the
+   * same expression would scan at 08:00 on one and 11:00 local on the other.
+   * `Africa/Dar_es_Salaam` has no daylight saving, so 08:00 there is 05:00 UTC
+   * all year.
+   */
+  expiryScanTimeZone:
+    process.env.LEASE_EXPIRY_SCAN_TIMEZONE?.trim() || 'Africa/Dar_es_Salaam',
 }));
