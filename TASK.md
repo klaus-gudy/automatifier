@@ -23,6 +23,17 @@ as part of feature work.
 
 ## Log
 
+### 2026-09-15 — Response shape back to `windowDays` + `leases` (uncommitted)
+
+- `GET /api/v1/leases/expiring` returns `{ windowDays: [24, 1], leases: [...] }`
+  again: the configured `LEASE_EXPIRY_DAYS` (furthest first), then one flat
+  list of matching leases, soonest to expire first. Replaces
+  `{ periods: [{ days, leases }] }` from `494d54c`.
+- Matching is unchanged — a lease is listed when its whole days left equals one
+  of `windowDays` exactly. Each lease's `daysLeft` tells which one it matched.
+- `README.md`'s "Expiring leases" section still describes the grouped
+  `periods` shape; left as is.
+
 ### 2026-09-15 — Expiry periods from `LEASE_EXPIRY_DAYS` (`494d54c`)
 
 - `GET /api/v1/leases/expiring` now returns `{ periods: [{ days, leases }] }`,

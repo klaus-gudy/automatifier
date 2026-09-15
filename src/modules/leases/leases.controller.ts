@@ -21,20 +21,26 @@ export class LeasesController {
    * the same periods, so they stay one decision made in one place; a caller
    * able to ask for its own would see leases the rest of the service never acts
    * on.
+   *
+   * `windowDays` echoes that configuration back so a reader of the response
+   * can tell an empty `leases` ("nothing due") from a misconfigured service
+   * ("looking at the wrong days").
    */
   @Get('expiring')
   @ApiOperation({
     summary: 'Active leases expiring in the configured periods',
     description:
-      'For each period in LEASE_EXPIRY_DAYS (furthest first), every lease ' +
-      'across all organizations that has started and has exactly that many ' +
-      'whole days left. A period with no leases is still listed, with an ' +
-      'empty array.',
+      'Every lease, across all organizations, that has started and has ' +
+      'exactly one of LEASE_EXPIRY_DAYS whole days left — returned as the ' +
+      'configured days followed by one list of leases, soonest first.',
   })
   @ApiResponse({ status: HttpStatus.OK, type: ExpiringLeasesResponseDto })
   async findExpiring(): Promise<ExpiringLeasesResponseDto> {
+    const windowDays = this.config.expiryDays;
+
     return {
-      periods: await this.leases.findExpiringInPeriods(this.config.expiryDays),
+      windowDays,
+      leases: await this.leases.findExpiring(windowDays),
     };
   }
 }

@@ -2,10 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import {
-  ExpiringLeaseDto,
-  LeaseExpiryPeriodDto,
-} from '@/modules/leases/dto/expiring-leases-response.dto';
+import { ExpiringLeaseDto } from '@/modules/leases/dto/expiring-leases-response.dto';
 import { Lease } from '@/modules/leases/lease.entity';
 
 /**
@@ -27,8 +24,8 @@ const NOW_UTC = `(now() AT TIME ZONE 'UTC')`;
  * Computed by the database, in the same statement as the filter, rather than
  * in Node afterwards. Matching an *exact* count makes the two clocks matter: a
  * lease the database sees at 24.00001 days would be 23.99999 by the time Node
- * measured it a few milliseconds later, and would be reported under a period
- * it was not selected for.
+ * measured it a few milliseconds later, and would be reported with a
+ * `daysLeft` that is not one of the periods it was selected for.
  *
  * `CAST(... AS integer)` rather than `::integer`: TypeORM scans the SQL for
  * `:name` and substitutes any parameter of that name, so a `::` cast only works
@@ -44,8 +41,8 @@ export class LeasesService {
   ) {}
 
   /**
-   * Active leases whose days left is exactly one of `periods`, grouped by
-   * period in the order given, each group soonest-to-expire first.
+   * Active leases whose days left is exactly one of `periods`, in one list,
+   * soonest to expire first.
    *
    * "Active" is jarvis's own definition (`lib/dashboard.ts`): started, and not
    * yet ended. `startDate <= now` matters here: a short lease that starts next
@@ -55,16 +52,10 @@ export class LeasesService {
    * successor once `endDate` has *passed*, so a lease that has not ended cannot
    * have one yet.
    *
-   * One query for every period, not one per period: a lease has a single
-   * days-left value, so it can only match one of them, and grouping the result
-   * in memory costs nothing.
-   *
    * Not scoped to an organization, unlike every query in jarvis: this service
    * works across all of them.
    */
-  async findExpiringInPeriods(
-    periods: number[],
-  ): Promise<LeaseExpiryPeriodDto[]> {
+  async findExpiring(periods: number[]): Promise<ExpiringLeaseDto[]> {
     // `IN ()` is a syntax error in Postgres, and there is nothing to find.
     if (periods.length === 0) return [];
 
@@ -84,12 +75,12 @@ export class LeasesService {
       raw.map((row) => [row.lease_id, row.daysLeft]),
     );
 
-    return periods.map((days) => ({
-      days,
-      leases: entities
-        .filter((lease) => daysLeftById.get(lease.id) === days)
-        .map((lease) => toExpiringLeaseDto(lease, days)),
-    }));
+    return entities.flatMap((lease) => {
+      const daysLeft = daysLeftById.get(lease.id);
+      return daysLeft === undefined
+        ? []
+        : [toExpiringLeaseDto(lease, daysLeft)];
+    });
   }
 }
 

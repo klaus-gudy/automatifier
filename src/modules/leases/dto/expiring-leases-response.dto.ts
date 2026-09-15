@@ -20,11 +20,11 @@ export class ExpiringLeaseDto {
   endDate: Date;
 
   @ApiProperty({
-    example: 16,
+    example: 24,
     description:
       'Whole days until `endDate`, rounded down — the same count jarvis ' +
-      'shows on its lease list, so the two never disagree about a lease ' +
-      'by one day.',
+      'shows on its lease list. Always one of `windowDays`, which is how a ' +
+      'caller tells which period a lease matched.',
   })
   daysLeft: number;
 
@@ -46,28 +46,22 @@ export class ExpiringLeaseDto {
   renewedFromId: string | null;
 }
 
-export class LeaseExpiryPeriodDto {
+export class ExpiringLeasesResponseDto {
   @ApiProperty({
-    example: 24,
+    example: [24, 1],
+    type: [Number],
     description:
-      'One entry from LEASE_EXPIRY_DAYS. Every lease below has exactly this ' +
-      'many whole days left.',
+      'The configured LEASE_EXPIRY_DAYS, furthest first. A lease is listed ' +
+      'when its whole days left equals one of these exactly — not "this many ' +
+      'or fewer".',
   })
-  days: number;
+  windowDays: number[];
 
   @ApiProperty({
     type: [ExpiringLeaseDto],
-    description: 'Soonest to expire first. Empty when nothing matches.',
+    description:
+      'Every matching lease in one list, soonest to expire first. Empty when ' +
+      'nothing matches.',
   })
   leases: ExpiringLeaseDto[];
-}
-
-export class ExpiringLeasesResponseDto {
-  @ApiProperty({
-    type: [LeaseExpiryPeriodDto],
-    description:
-      'One entry per configured period, furthest first — including periods ' +
-      'with no leases, so the response shows what is configured.',
-  })
-  periods: LeaseExpiryPeriodDto[];
 }
