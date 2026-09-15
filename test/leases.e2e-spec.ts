@@ -106,6 +106,34 @@ describe('Leases (e2e)', () => {
     expect(lease.endDate).toBe(row.endDate);
   });
 
+  it('POST /api/v1/leases/expiring/scan runs the scan now and returns what GET returns', async () => {
+    const before = Date.now();
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/leases/expiring/scan')
+      // 200, not POST's default 201: a scan creates nothing.
+      .expect(200);
+
+    const scan = response.body as ExpiringLeasesBody & {
+      trigger: string;
+      scannedAt: string;
+      nextScheduledRunAt: string;
+    };
+    const listed = await fetchExpiring();
+
+    expect(scan.trigger).toBe('manual');
+    expect(scan.windowDays).toEqual(listed.windowDays);
+    // Same query, same moment (to within a request), same leases — the scan is
+    // the endpoint's logic on a timer, not a second definition of "expiring".
+    expect(scan.leases.map((lease) => lease.id)).toEqual(
+      listed.leases.map((lease) => lease.id),
+    );
+    expect(new Date(scan.scannedAt).getTime()).toBeGreaterThanOrEqual(before);
+    expect(new Date(scan.nextScheduledRunAt).getTime()).toBeGreaterThan(
+      new Date(scan.scannedAt).getTime(),
+    );
+  });
+
   afterAll(async () => {
     await app.close();
   });
