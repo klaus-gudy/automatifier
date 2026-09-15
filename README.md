@@ -85,9 +85,16 @@ npm run migration:run
 npm run migration:revert
 ```
 
-`DATABASE_MIGRATIONS_RUN` runs pending migrations at boot. Fine for one
-process; turn it off and run `migration:run` as a deploy step once this has
-replicas, or two instances starting together will race.
+`DATABASE_MIGRATIONS_RUN=true` runs pending migrations at boot. It is off when
+blank or unset, because the database this service reads today is jarvis's, and
+its schema belongs to Prisma. Even against a database this service owns, only
+turn it on for a single process; once there are replicas, run `migration:run`
+as a deploy step, or two instances starting together will race.
+
+`DATABASE_LOGGING=true` prints every SQL statement. Off when blank or unset.
+
+Both accept only `true` or `false` (any case) — anything else fails at boot
+with the variable's name, rather than quietly falling back to a default.
 
 ## Logging
 
