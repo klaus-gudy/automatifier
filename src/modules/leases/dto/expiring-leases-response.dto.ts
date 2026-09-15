@@ -46,16 +46,28 @@ export class ExpiringLeaseDto {
   renewedFromId: string | null;
 }
 
-export class ExpiringLeasesResponseDto {
+export class LeaseExpiryPeriodDto {
   @ApiProperty({
-    example: 30,
-    description: 'How far ahead of now the window reaches, in days.',
+    example: 24,
+    description:
+      'One entry from LEASE_EXPIRY_DAYS. Every lease below has exactly this ' +
+      'many whole days left.',
   })
-  windowDays: number;
+  days: number;
 
   @ApiProperty({
     type: [ExpiringLeaseDto],
-    description: 'Soonest to expire first.',
+    description: 'Soonest to expire first. Empty when nothing matches.',
   })
   leases: ExpiringLeaseDto[];
+}
+
+export class ExpiringLeasesResponseDto {
+  @ApiProperty({
+    type: [LeaseExpiryPeriodDto],
+    description:
+      'One entry per configured period, furthest first — including periods ' +
+      'with no leases, so the response shows what is configured.',
+  })
+  periods: LeaseExpiryPeriodDto[];
 }

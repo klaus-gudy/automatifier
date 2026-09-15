@@ -21,15 +21,23 @@ RabbitMQ already running locally does not collide with this one.
 
 Set `RABBITMQ_ENABLED=false` to run the HTTP side with no broker at all.
 
+## Expiring leases
+
+`GET /api/v1/leases/expiring` lists active leases (started, not yet ended)
+grouped by the periods in `LEASE_EXPIRY_DAYS`, e.g. `LEASE_EXPIRY_DAYS=24,1`.
+A lease is in a period when its whole days left is *exactly* that number, so a
+lease appears once at 24 days and again at 1 day, never in both at once. Blank
+means `24,1`; anything that is not comma-separated whole numbers fails at boot.
+
 ## Layout
 
 ```
 src/
-  config/          One registerAs namespace per concern (app, database, rabbitmq)
+  config/          One registerAs namespace per concern (app, database, lease, rabbitmq)
   common/          Logging interceptor, log formatting, health types
   database/        TypeORM wiring, migrations, the CLI data source
   messaging/       The broker connection. Transport only — it knows no features
-  modules/         Features. health/ is the only one so far
+  modules/         Features: health/, and leases/ (read-only over jarvis's database)
   configure-app.ts Prefix + validation, shared by main.ts and the e2e test
   swagger.ts       OpenAPI document
 ```

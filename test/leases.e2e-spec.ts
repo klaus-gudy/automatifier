@@ -1,22 +1,26 @@
 import { INestApplication } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
 
+import leaseConfig from '@/config/lease.config';
 import { AppModule } from '@/app.module';
 import { configureApp } from '@/configure-app';
 
 /** Dates arrive as ISO strings over HTTP, not `Date`s. */
 interface ExpiringLeasesBody {
-  windowDays: number;
-  leases: { id: string; endDate: string; daysLeft: number }[];
+  periods: {
+    days: number;
+    leases: { id: string; endDate: string; daysLeft: number }[];
+  }[];
 }
 
 /**
  * **Needs jarvis's database** — this reads real rows and asserts only what
- * must hold for any data, so it passes whether the window holds zero leases
- * or fifty.
+ * must hold for any data, so it passes whether a period holds zero leases or
+ * fifty.
  */
 describe('Leases (e2e)', () => {
   let app: INestApplication<App>;
@@ -31,31 +35,67 @@ describe('Leases (e2e)', () => {
     await app.init();
   });
 
-  it('GET /api/v1/leases/expiring returns leases inside the 30-day window, soonest first', async () => {
+  const fetchExpiring = async (): Promise<ExpiringLeasesBody> => {
     const response = await request(app.getHttpServer())
       .get('/api/v1/leases/expiring')
       .expect(200);
+    return response.body as ExpiringLeasesBody;
+  };
 
-    const body = response.body as ExpiringLeasesBody;
+  it('lists every configured period, furthest first', async () => {
+    const { expiryDays } = app.get<ConfigType<typeof leaseConfig>>(
+      leaseConfig.KEY,
+    );
 
-    expect(body.windowDays).toBe(30);
+    const body = await fetchExpiring();
 
-    for (const lease of body.leases) {
-      expect(lease.daysLeft).toBeGreaterThanOrEqual(0);
-      expect(lease.daysLeft).toBeLessThanOrEqual(30);
+    // Taken from the running config rather than hard-coded, so this checks the
+    // wiring from LEASE_EXPIRY_DAYS without breaking whenever .env changes.
+    expect(body.periods.map((period) => period.days)).toEqual(expiryDays);
+  });
+
+  it('puts only leases with exactly that many days left in each period, soonest first', async () => {
+    const body = await fetchExpiring();
+
+    for (const period of body.periods) {
+      for (const lease of period.leases) {
+        expect(lease.daysLeft).toBe(period.days);
+      }
+
+      const endDates = period.leases.map((lease) => lease.endDate);
+      expect(endDates).toEqual([...endDates].sort());
     }
+  });
 
-    const endDates = body.leases.map((lease) => lease.endDate);
-    expect(endDates).toEqual([...endDates].sort());
+  it('includes every active lease that has exactly that many days left', async () => {
+    const body = await fetchExpiring();
+
+    /*
+     * The assertions above hold just as well for a response where every period
+     * is empty — which is exactly what a broken join between the computed
+     * `daysLeft` and the entities would produce. So count the same thing
+     * independently, in plain SQL, and require the ids to match.
+     */
+    for (const period of body.periods) {
+      const rows = await app.get(DataSource).query<{ id: string }[]>(
+        `SELECT id FROM "Lease"
+          WHERE "startDate" <= (now() AT TIME ZONE 'UTC')
+            AND "endDate" >= (now() AT TIME ZONE 'UTC')
+            AND floor(extract(epoch FROM "endDate" - (now() AT TIME ZONE 'UTC')) / 86400) = $1`,
+        [period.days],
+      );
+
+      expect(period.leases.map((lease) => lease.id).sort()).toEqual(
+        rows.map((row) => row.id).sort(),
+      );
+    }
   });
 
   it('returns end dates as the UTC values jarvis stored', async () => {
-    const response = await request(app.getHttpServer())
-      .get('/api/v1/leases/expiring')
-      .expect(200);
+    const body = await fetchExpiring();
 
-    const [lease] = (response.body as ExpiringLeasesBody).leases;
-    // Nothing in the window means nothing to compare, not a failure.
+    const lease = body.periods.flatMap((period) => period.leases)[0];
+    // Nothing in any period means nothing to compare, not a failure.
     if (!lease) return;
 
     /*

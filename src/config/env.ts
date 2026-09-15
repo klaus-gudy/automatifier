@@ -26,3 +26,30 @@ export function booleanEnv(name: string, defaultValue: boolean): boolean {
       `got "${process.env[name]}"`,
   );
 }
+
+/**
+ * Reads a comma-separated list of whole numbers, zero or greater — `24,1`.
+ *
+ * Blank or unset takes the default, for the same reason as `booleanEnv`. Every
+ * entry must be digits only, so `24,,1`, `24;1`, `-1` and `1.5` all throw at
+ * boot rather than being dropped: `Number('')` is `0` and `parseInt('1.5')` is
+ * `1`, and either would quietly configure a period nobody asked for.
+ *
+ * Order and duplicates are returned as written; what they mean is up to the
+ * caller.
+ */
+export function integerListEnv(name: string, defaultValue: number[]): number[] {
+  const raw = process.env[name]?.trim();
+  if (!raw) return defaultValue;
+
+  return raw.split(',').map((entry) => {
+    const value = entry.trim();
+    if (!/^\d+$/.test(value)) {
+      throw new Error(
+        `${name} must be comma-separated whole numbers like "24,1" ` +
+          `(or left blank for "${defaultValue.join(',')}"), got "${raw}"`,
+      );
+    }
+    return Number(value);
+  });
+}

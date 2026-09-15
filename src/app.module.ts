@@ -5,6 +5,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
 import appConfig from '@/config/app.config';
 import databaseConfig from '@/config/database.config';
+import leaseConfig from '@/config/lease.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 import { DatabaseModule } from '@/database/database.module';
 import { HealthModule } from '@/modules/health/health.module';
@@ -27,7 +28,7 @@ import { LeasesModule } from '@/modules/leases/leases.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, rabbitmqConfig],
+      load: [appConfig, databaseConfig, leaseConfig, rabbitmqConfig],
       envFilePath: '.env',
       // Read once at boot rather than off `process.env` on every access.
       cache: true,
