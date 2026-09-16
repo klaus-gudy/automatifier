@@ -140,6 +140,23 @@ export class LeaseReminderTallyDto {
       'Recorded rather than dropped, so "why was nobody texted" has an answer.',
   })
   skipped: number;
+
+  @ApiProperty({
+    example: 3,
+    description:
+      'Reminders the broker confirmed during this run — including any left ' +
+      'pending by earlier runs, since a scan publishes everything waiting, ' +
+      'not only what it just recorded.',
+  })
+  published: number;
+
+  @ApiProperty({
+    example: 0,
+    description:
+      'Reminders that failed to publish and are left for the sweeper. Zero ' +
+      'unless the broker is unreachable or refusing.',
+  })
+  failed: number;
 }
 
 export class LeaseExpiryScanResultDto extends ExpiringLeasesResponseDto {

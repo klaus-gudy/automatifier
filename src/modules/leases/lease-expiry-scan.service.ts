@@ -101,14 +101,20 @@ export class LeaseExpiryScanService implements OnModuleInit {
       );
     }
 
-    // Written before anything is published, and reported so a scan that found
-    // leases but recorded nothing new is visible as exactly that.
-    const reminders = await this.reminders.recordFor(leases);
+    /*
+     * Recorded first, published second, and never the other way round. A row
+     * that exists but was not published is retried by the sweeper; a message
+     * published with no row behind it is one nobody can account for.
+     */
+    const recorded = await this.reminders.recordFor(leases);
+    const { published, failed } = await this.reminders.publishPending();
+    const reminders = { ...recorded, published, failed };
 
     this.logger.log(
       `[SCANNED] ${leases.length} lease(s) — reminders: ` +
         `${reminders.created} new, ${reminders.duplicates} already recorded, ` +
-        `${reminders.skipped} skipped (no usable phone) ` +
+        `${reminders.skipped} skipped (no usable phone), ` +
+        `${published} published, ${failed} left pending ` +
         `+${Date.now() - scannedAt.getTime()}ms`,
     );
     this.logger.log(`${SEPARATOR}\n`);

@@ -17,6 +17,11 @@ describe('LeaseExpiryScanService', () => {
     expiryDays: [24, 1],
     expiryScanCron: '0 8 * * *',
     expiryScanTimeZone: 'Africa/Dar_es_Salaam',
+    smsQueue: 'NOTIFIER_SMS_QUEUE',
+    smsRoutingKey: 'lease.expiring',
+    reminderSweepCron: '*/10 * * * *',
+    reminderBatchSize: 50,
+    reminderMaxAttempts: 5,
   };
 
   const lease: ExpiringLeaseDto = {
@@ -38,10 +43,13 @@ describe('LeaseExpiryScanService', () => {
     renewedFromId: null,
   };
 
-  const tally = { created: 1, duplicates: 0, skipped: 0 };
+  const recorded = { created: 1, duplicates: 0, skipped: 0 };
+  const delivery = { published: 1, failed: 0 };
+  const tally = { ...recorded, ...delivery };
 
   let findExpiring: jest.Mock;
   let recordFor: jest.Mock;
+  let publishPending: jest.Mock;
   let registry: SchedulerRegistry;
   let service: LeaseExpiryScanService;
   let logError: jest.SpyInstance;
@@ -54,11 +62,12 @@ describe('LeaseExpiryScanService', () => {
       .mockImplementation(() => undefined);
 
     findExpiring = jest.fn().mockResolvedValue([lease]);
-    recordFor = jest.fn().mockResolvedValue(tally);
+    recordFor = jest.fn().mockResolvedValue(recorded);
+    publishPending = jest.fn().mockResolvedValue(delivery);
     registry = new SchedulerRegistry();
     service = new LeaseExpiryScanService(
       { findExpiring } as unknown as LeasesService,
-      { recordFor } as unknown as LeaseReminderService,
+      { recordFor, publishPending } as unknown as LeaseReminderService,
       registry,
       config,
     );
@@ -113,6 +122,16 @@ describe('LeaseExpiryScanService', () => {
     expect(recordFor).toHaveBeenCalledWith([lease]);
   });
 
+  it('records before it publishes', async () => {
+    await service.scan('manual');
+
+    // Order matters: a message published with no row behind it is one nobody
+    // can account for, and the sweeper cannot retry what was never written.
+    expect(recordFor.mock.invocationCallOrder[0]).toBeLessThan(
+      publishPending.mock.invocationCallOrder[0],
+    );
+  });
+
   it('logs a failed scheduled scan instead of throwing', async () => {
     findExpiring.mockRejectedValueOnce(new Error('connection terminated'));
 
@@ -131,7 +150,7 @@ describe('LeaseExpiryScanService', () => {
   it('refuses to boot with a schedule it cannot parse', () => {
     const broken = new LeaseExpiryScanService(
       { findExpiring } as unknown as LeasesService,
-      { recordFor } as unknown as LeaseReminderService,
+      { recordFor, publishPending } as unknown as LeaseReminderService,
       new SchedulerRegistry(),
       { ...config, expiryScanCron: 'every morning' },
     );
