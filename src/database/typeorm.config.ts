@@ -1,6 +1,8 @@
 import { types } from 'pg';
 import { DataSourceOptions } from 'typeorm';
 
+import { AUTOMATIFIER_SCHEMA } from '@/database/schema';
+
 /*
  * jarvis stores every timestamp as UTC in `timestamp without time zone`. By
  * default `pg` parses that type as *local* time, so on a machine at +03:00 a
@@ -44,6 +46,19 @@ export const buildDataSourceOptions = (
     type: 'postgres' as const,
     entities: [__dirname + '/../**/*.entity{.ts,.js}'],
     migrations: [__dirname + '/migrations/*{.ts,.js}'],
+    /*
+     * Present here for one reason: TypeORM decides where its own `migrations`
+     * table goes from the *data source*, not from any entity
+     * (`MigrationExecutor` reads `dataSource.driver.options.schema`). Left
+     * unset it would try to create that table in `public`, which is jarvis's
+     * and which this role cannot write to.
+     *
+     * It is not what places the entities. Each of those declares its own schema
+     * — `Lease` reads `public`, `LeaseReminder` owns its table here — because
+     * TypeORM qualifies every table name rather than setting `search_path`, so
+     * nothing falls back to a search order.
+     */
+    schema: AUTOMATIFIER_SCHEMA,
     /*
      * Schema changes go through migrations only. `synchronize: true` reads as
      * a convenience and behaves as a data-loss bug the first time a column is

@@ -63,10 +63,12 @@ Steps, in order:
        it can create and drop a table in its own schema, while
        `UPDATE "Lease"` fails with *permission denied for table Lease* — the
        grants, not the session flag, are what keep jarvis's tables unwritable.
-2. [ ] `lease_reminder` entity + hand-written migration. DataSource gets
-       `schema: 'automatifier'`; the read-only `Lease` entity gets an explicit
-       `schema: 'public'`, so TypeORM's own `migrations` table lands in the new
-       schema rather than jarvis's.
+2. [x] **Done 2026-09-16.** `lease_reminder` entity + hand-written migration;
+       `DATABASE_SCHEMA` (default `automatifier`) on the data source, explicit
+       `schema: 'public'` on the `Lease` entity. Verified after
+       `migration:run`: the `automatifier` schema holds `lease_reminder` and
+       TypeORM's `migrations`, `public` still has its original 20 tables, and
+       the expiring endpoint still returns real jarvis rows.
 3. [ ] Scan inserts `PENDING` rows with `ON CONFLICT DO NOTHING`, publishes
        nothing yet. Verify dedupe against repeated real scans.
 4. [ ] Point at jarvis's broker, enable it, publish the rows that actually
@@ -95,7 +97,47 @@ Two things that will bite if forgotten:
 
 ## Log
 
-### 2026-09-16 — Two more settings made configurable (uncommitted)
+### 2026-09-16 — `lease_reminder` table, in its own schema (uncommitted)
+
+- `LeaseReminder` entity + hand-written migration
+  `1789546018900-CreateLeaseReminder`, creating
+  `automatifier.lease_reminder`: the lease reference by value, snapshots of
+  recipient/org/unit, the rendered `message`, `status`, `attempts`,
+  `last_error`, `published_at`.
+- `status` is `text` with a CHECK rather than a Postgres enum (notifier uses an
+  enum): the list will grow, and widening a CHECK is one migration where
+  `ALTER TYPE ... ADD VALUE` cannot be used in the transaction that references
+  the new value.
+- Unique on `(lease_id, days_left, lease_end_date)` — the de-dupe gate, in the
+  database because two concurrent scans would both pass an application-level
+  check. Partial index on `created_at WHERE status = 'PENDING'` for the
+  sweeper.
+- Schema names are **constants in `src/database/schema.ts`**, not
+  configuration: `JARVIS_SCHEMA` (read-only, SELECT and no write grant) and
+  `AUTOMATIFIER_SCHEMA` (owned outright). Each entity declares its own — a
+  `DATABASE_SCHEMA` variable was tried first and dropped, since it would let an
+  environment move `lease_reminder` while `Lease` stayed put. The data source
+  still sets `schema` for one reason only: TypeORM reads
+  `dataSource.driver.options.schema` to decide where its `migrations` table
+  goes, and no entity can tell it that.
+- The migration writes the schema name out rather than importing the constant:
+  it records what was done to a database on a day, so a later rename must not
+  retroactively change what it says.
+- **The `@/` alias now works under the TypeORM CLI too.** The `typeorm` script
+  runs `node -r ts-node/register -r tsconfig-paths/register` against
+  `typeorm/cli.js` instead of the `typeorm-ts-node-commonjs` wrapper, which
+  registers ts-node only. Before this, the CLI loaded every entity through the
+  glob and died on the first entity importing `@/database/schema`. The old
+  "relative imports in `data-source.ts`" exception is gone, along with its
+  comments — keep `-r tsconfig-paths/register` and the alias holds everywhere.
+- Verified by reverting and re-running the migration: `lease_reminder`
+  disappears and comes back, `public` stays at 20 tables throughout.
+- `npm run migration:generate` now refuses with an explanation and exit 1. On a
+  shared database it would diff jarvis's Prisma-owned `public` schema against
+  this app's partial mappings and emit `DROP COLUMN` for everything unmapped.
+- All timestamps in this schema are `timestamptz`, unlike jarvis's zone-less
+  columns, so writing a `Date` here needs no parser and no agreement about
+  which zone the value is "really" in.
 
 - `HEALTH_PROBE_TIMEOUT_MS` (default 2000) and `MAX_PAYLOAD_CHARS` (default
   800) join `app.config.ts`, replacing the constants of the same values that

@@ -1,8 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
-// Relative, not `@/config/env`: this file is also loaded by the TypeORM CLI
-// through `data-source.ts`, where `ts-node` does not resolve the alias.
-import { booleanEnv } from './env';
+import { booleanEnv } from '@/config/env';
 
 /**
  * Postgres connection settings, as a namespaced config factory.

@@ -18,10 +18,10 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "typeorm": "typeorm-ts-node-commonjs -d src/database/data-source.ts",
+    "typeorm": "node -r ts-node/register -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/database/data-source.ts",
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
-    "migration:generate": "npm run typeorm -- migration:generate",
+    "migration:generate": "echo 'REFUSED. This database is shared with jarvis, whose public schema is owned by Prisma. migration:generate diffs the whole database against this app partial entity mappings and emits DROP COLUMN for every column it does not map. Write the migration by hand: npm run migration:create -- src/database/migrations/YourName' && exit 1",
     "migration:create": "typeorm-ts-node-commonjs migration:create"
   },
   "dependencies": {
