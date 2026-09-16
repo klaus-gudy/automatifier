@@ -21,6 +21,13 @@ import { describePayload, SEPARATOR } from '@/common/logging/log-format';
 import appConfig from '@/config/app.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 
+/**
+ * How long a publish may wait for the broker's confirm before it is treated as
+ * failed. Generous for a healthy broker, short enough that a caller is not left
+ * holding a request while the connection is down.
+ */
+const PUBLISH_TIMEOUT_MS = 10_000;
+
 /** What a feature module needs to declare to receive its events. */
 export type Subscription = {
   /** The queue this listener owns. One queue per listener, never shared. */
@@ -151,7 +158,13 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
       this.logger.log('broker has unblocked publishing'),
     );
 
-    this.channel = this.connection.createChannel({
+    this.channel = this.createChannel();
+  }
+
+  private createChannel(): ChannelWrapper {
+    if (!this.connection) throw new Error('connection was never opened');
+
+    const channel = this.connection.createChannel({
       // This service serialises its own payloads, so the wrapper must not also
       // JSON-encode them — that would double-encode every publish.
       json: false,
@@ -182,6 +195,26 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
         await channel.prefetch(this.config.prefetch);
       },
     });
+
+    /*
+     * **Not optional.** `ChannelWrapper` is an EventEmitter, and an unhandled
+     * `error` event on one of those does not warn — it throws, out of a
+     * callback nobody is awaiting, and takes the process down. Any broker-side
+     * channel fault gets here: a queue that already exists with different
+     * arguments (`PRECONDITION_FAILED`), publishing to an exchange this user
+     * may not touch (`ACCESS_REFUSED`), a deleted queue. None of those are
+     * reasons for an HTTP service to exit.
+     *
+     * The library reopens the channel on its own and replays every `addSetup`,
+     * so recovery needs nothing here beyond not dying.
+     */
+    channel.on('error', (cause: unknown) =>
+      this.logger.error(`channel error: ${this.describe(cause)}`),
+    );
+
+    channel.on('close', () => this.logger.warn('channel closed'));
+
+    return channel;
   }
 
   /**
@@ -226,17 +259,29 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
   async publish(routingKey: string, payload: unknown): Promise<void> {
     const channel = this.requireChannel();
 
-    await channel.publish(
-      this.config.exchange,
-      routingKey,
-      Buffer.from(JSON.stringify(payload)),
-      {
-        contentType: 'application/json',
-        // Survives a broker restart, in a durable queue. Without it the message
-        // is held in memory only and a restart discards it.
-        persistent: true,
-        timestamp: Date.now(),
-      },
+    /*
+     * Bounded, because `amqp-connection-manager` buffers a publish made while
+     * disconnected and only settles the promise once the broker confirms it.
+     * That is the right behaviour for a background job and the wrong one for a
+     * caller waiting on an HTTP response: with the broker unreachable, this
+     * never returns at all rather than failing. A rejection here is recoverable
+     * — the reminder stays PENDING and the sweeper tries again — while a hang
+     * is not.
+     */
+    await withTimeout(
+      channel.publish(
+        this.config.exchange,
+        routingKey,
+        Buffer.from(JSON.stringify(payload)),
+        {
+          contentType: 'application/json',
+          // Survives a broker restart, in a durable queue. Without it the
+          // message is held in memory only and a restart discards it.
+          persistent: true,
+          timestamp: Date.now(),
+        },
+      ),
+      PUBLISH_TIMEOUT_MS,
     );
 
     this.logger.log(
@@ -262,21 +307,9 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
   ): Promise<void> {
     const channel = this.requireChannel();
     const { queue, routingKeys } = subscription;
-    const deadLetterQueue = `${queue}_DEAD`;
 
     await channel.addSetup(async (ch: ConfirmChannel) => {
-      await ch.assertQueue(deadLetterQueue, { durable: true });
-      await ch.bindQueue(
-        deadLetterQueue,
-        this.config.deadLetterExchange,
-        queue,
-      );
-
-      await this.assertWorkQueue(ch, queue);
-
-      for (const routingKey of routingKeys) {
-        await ch.bindQueue(queue, this.config.exchange, routingKey);
-      }
+      await this.declareQueue(ch, subscription);
 
       await ch.consume(queue, (message) => {
         // A null delivery means the consumer was cancelled broker-side — there
@@ -287,8 +320,71 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
 
     this.logger.log(
       `listening on "${queue}" for [${routingKeys.join(', ')}] — ` +
-        `rejects held in "${deadLetterQueue}"`,
+        `rejects held in "${queue}_DEAD"`,
     );
+  }
+
+  /**
+   * Binds an **existing queue owned by another service** to this exchange, so
+   * what is published here reaches a consumer that was never ours.
+   *
+   * Binds only. It deliberately does not assert the queue, and that is not
+   * timidity — a queue's arguments are fixed at creation, so asserting one
+   * somebody else created with a different dead-letter exchange is refused with
+   * `PRECONDITION_FAILED`, which closes the channel and puts the connection
+   * into a retry loop. `NOTIFIER_SMS_QUEUE` is exactly that case: jarvis
+   * declares it against `jarvis.sms.dlx`, and notifier only checks it exists.
+   *
+   * The consequence is worth stating plainly: **the queue must already exist**.
+   * A binding to a missing queue fails, loudly, rather than creating one — and
+   * anything published before it exists is dropped by the exchange without
+   * complaint. Its owner is responsible for creating it, as jarvis is here.
+   *
+   * Through `addSetup` like `subscribe`, so the binding is replayed on every
+   * reconnect rather than assumed to have survived.
+   */
+  async bindConsumerQueue({ queue, routingKeys }: Subscription): Promise<void> {
+    const channel = this.requireChannel();
+
+    await channel.addSetup(async (ch: ConfirmChannel) => {
+      for (const routingKey of routingKeys) {
+        await ch.bindQueue(queue, this.config.exchange, routingKey);
+      }
+    });
+
+    this.logger.log(
+      `bound "${queue}" to "${this.config.exchange}" for ` +
+        `[${routingKeys.join(', ')}] — queue owned and consumed elsewhere`,
+    );
+  }
+
+  /** Whether a broker connection is configured at all (`RABBITMQ_ENABLED`). */
+  get isEnabled(): boolean {
+    return this.config.enabled;
+  }
+
+  /**
+   * The topology one listener needs: its holding area, its queue, its bindings.
+   *
+   * Shared by `subscribe` and `declareConsumerQueue` so a queue this service
+   * publishes to is built exactly like one it consumes — the dead-letter wiring
+   * in particular, which is easy to leave off a queue nobody here reads and
+   * impossible to add later without deleting the queue.
+   */
+  private async declareQueue(
+    ch: ConfirmChannel,
+    { queue, routingKeys }: Subscription,
+  ): Promise<void> {
+    const deadLetterQueue = `${queue}_DEAD`;
+
+    await ch.assertQueue(deadLetterQueue, { durable: true });
+    await ch.bindQueue(deadLetterQueue, this.config.deadLetterExchange, queue);
+
+    await this.assertWorkQueue(ch, queue);
+
+    for (const routingKey of routingKeys) {
+      await ch.bindQueue(queue, this.config.exchange, routingKey);
+    }
   }
 
   /**
