@@ -9,6 +9,7 @@ import {
   LeaseExpiryScanResultDto,
   LeaseExpiryScanTrigger,
 } from '@/modules/leases/dto/expiring-leases-response.dto';
+import { LeaseReminderService } from '@/modules/leases/lease-reminder.service';
 import { LeasesService } from '@/modules/leases/leases.service';
 
 export const LEASE_EXPIRY_SCAN_JOB = 'lease-expiry-scan';
@@ -35,6 +36,7 @@ export class LeaseExpiryScanService implements OnModuleInit {
 
   constructor(
     private readonly leases: LeasesService,
+    private readonly reminders: LeaseReminderService,
     private readonly scheduler: SchedulerRegistry,
     @Inject(leaseConfig.KEY)
     private readonly config: ConfigType<typeof leaseConfig>,
@@ -94,11 +96,20 @@ export class LeaseExpiryScanService implements OnModuleInit {
       this.logger.log(
         `  ${lease.id} daysLeft=${lease.daysLeft} ` +
           `ends=${lease.endDate.toISOString()} ` +
-          `unit=${lease.unitId} membership=${lease.membershipId}`,
+          `${lease.unit.propertyName} - Unit ${lease.unit.label} ` +
+          `tenant=${lease.membership.name ?? '(unnamed)'}`,
       );
     }
+
+    // Written before anything is published, and reported so a scan that found
+    // leases but recorded nothing new is visible as exactly that.
+    const reminders = await this.reminders.recordFor(leases);
+
     this.logger.log(
-      `[SCANNED] ${leases.length} lease(s) +${Date.now() - scannedAt.getTime()}ms`,
+      `[SCANNED] ${leases.length} lease(s) — reminders: ` +
+        `${reminders.created} new, ${reminders.duplicates} already recorded, ` +
+        `${reminders.skipped} skipped (no usable phone) ` +
+        `+${Date.now() - scannedAt.getTime()}ms`,
     );
     this.logger.log(`${SEPARATOR}\n`);
 
@@ -108,6 +119,7 @@ export class LeaseExpiryScanService implements OnModuleInit {
       nextScheduledRunAt: this.nextScheduledRunAt(),
       windowDays,
       leases,
+      reminders,
     };
   }
 

@@ -9,6 +9,7 @@ import {
   LEASE_EXPIRY_SCAN_JOB,
   LeaseExpiryScanService,
 } from '@/modules/leases/lease-expiry-scan.service';
+import type { LeaseReminderService } from '@/modules/leases/lease-reminder.service';
 import type { LeasesService } from '@/modules/leases/leases.service';
 
 describe('LeaseExpiryScanService', () => {
@@ -20,8 +21,14 @@ describe('LeaseExpiryScanService', () => {
 
   const lease: ExpiringLeaseDto = {
     id: 'lease-1',
-    unitId: 'unit-1',
-    membershipId: 'membership-1',
+    organizationId: 'org-1',
+    membership: {
+      id: 'membership-1',
+      name: 'James Mchaga',
+      phone: '0712345678',
+      role: 'Tenant',
+    },
+    unit: { id: 'unit-1', label: 'Z1', propertyName: 'Old Baruti Estate' },
     startDate: new Date('2026-08-10T00:00:00Z'),
     endDate: new Date('2026-10-10T00:00:00Z'),
     daysLeft: 24,
@@ -31,7 +38,10 @@ describe('LeaseExpiryScanService', () => {
     renewedFromId: null,
   };
 
+  const tally = { created: 1, duplicates: 0, skipped: 0 };
+
   let findExpiring: jest.Mock;
+  let recordFor: jest.Mock;
   let registry: SchedulerRegistry;
   let service: LeaseExpiryScanService;
   let logError: jest.SpyInstance;
@@ -44,9 +54,11 @@ describe('LeaseExpiryScanService', () => {
       .mockImplementation(() => undefined);
 
     findExpiring = jest.fn().mockResolvedValue([lease]);
+    recordFor = jest.fn().mockResolvedValue(tally);
     registry = new SchedulerRegistry();
     service = new LeaseExpiryScanService(
       { findExpiring } as unknown as LeasesService,
+      { recordFor } as unknown as LeaseReminderService,
       registry,
       config,
     );
@@ -88,8 +100,17 @@ describe('LeaseExpiryScanService', () => {
       trigger: 'manual',
       windowDays: [24, 1],
       leases: [lease],
+      reminders: tally,
     });
     expect(result.nextScheduledRunAt).toEqual(service.nextScheduledRunAt());
+  });
+
+  it('records reminders for the leases it found', async () => {
+    await service.scan('manual');
+
+    // The scan hands the whole batch over rather than one lease at a time, so
+    // the owner lookup behind it happens once per organization, not per lease.
+    expect(recordFor).toHaveBeenCalledWith([lease]);
   });
 
   it('logs a failed scheduled scan instead of throwing', async () => {
@@ -110,6 +131,7 @@ describe('LeaseExpiryScanService', () => {
   it('refuses to boot with a schedule it cannot parse', () => {
     const broken = new LeaseExpiryScanService(
       { findExpiring } as unknown as LeasesService,
+      { recordFor } as unknown as LeaseReminderService,
       new SchedulerRegistry(),
       { ...config, expiryScanCron: 'every morning' },
     );

@@ -25,6 +25,12 @@ as part of feature work.
       `endDate` show as `{}` in the request/response log, though the real
       value is still returned in the HTTP response itself. Pre-existing, found
       while checking `MAX_PAYLOAD_CHARS`.
+- [ ] **Confirm the date in the message.** The agreed example reads "tarehe 11
+      October 2026" for a lease whose `endDate` is 2026-10-10. The render uses
+      `endDate` itself, giving "10 October 2026". jarvis starts a renewal on
+      `endDate + 1 day`, so +1 would read as "the day the next lease starts"
+      rather than the day this one ends — but if owners expect the vacate date,
+      it is a one-line change.
 - [ ] **Scan runs once per process.** Two replicas would each scan at 08:00.
       Harmless while it only logs; needs a lock or a single scheduler instance
       before the scan sends anything.
@@ -69,8 +75,9 @@ Steps, in order:
        `migration:run`: the `automatifier` schema holds `lease_reminder` and
        TypeORM's `migrations`, `public` still has its original 20 tables, and
        the expiring endpoint still returns real jarvis rows.
-3. [ ] Scan inserts `PENDING` rows with `ON CONFLICT DO NOTHING`, publishes
-       nothing yet. Verify dedupe against repeated real scans.
+3. [x] **Done 2026-09-16.** Scan inserts `PENDING` rows with `ON CONFLICT DO
+       NOTHING` and publishes nothing. Verified against real data: first scan
+       wrote 3 rows, second wrote 0 and reported 3 duplicates.
 4. [ ] Point at jarvis's broker, enable it, publish the rows that actually
        inserted, mark `PUBLISHED` on broker confirm.
 5. [ ] SMS consumer in notifier.
@@ -96,6 +103,31 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-16 — Reminders recorded, enriched lease query (uncommitted)
+
+- `GET /api/v1/leases/expiring` now carries what a message has to name:
+  `membership` (id, name, phone, role) and `unit` (id, label, propertyName),
+  plus `organizationId`.
+- **Recipients are Owners, not tenants.** The agreed message greets one person
+  and describes another — and jarvis's own `announceLeaseRenewals` sends lease
+  notices to `getOwnerRecipients(organizationId)`. `LeasesService.findOwnerRecipients`
+  mirrors it, matching the role name case-insensitively because role names are
+  editable free text. One reminder per Owner, so the unique key gained
+  `recipient_membership_id` — an organization with two Owners owes two texts.
+- `LeaseReminderService.recordFor` writes one row per (lease, period, Owner)
+  with `ON CONFLICT DO NOTHING` and reports `{ created, duplicates, skipped }`,
+  which the scan logs and returns. Publishing is still step 4.
+- Phone numbers are normalised to `255…` in `common/phone.ts` before storage.
+  An owner whose number cannot be normalised gets a `SKIPPED` row carrying the
+  reason, not silence. One real row in jarvis (`476978247`) exercises this.
+- The message is rendered in `lease-reminder.message.ts` and stored on the row
+  as sent, in the scan's configured time zone.
+- `findExpiring` is now one raw SQL statement. The query builder cannot join a
+  schema-qualified table — TypeORM splits `"public"."Membership"` on the dot
+  and reads `"public"` as an alias — and mapping `Membership`, `User`, `Role`,
+  `Unit` and `Property` as entities would put five more Prisma-owned tables
+  under this service's maintenance for six scalar columns.
 
 ### 2026-09-16 — `lease_reminder` table, in its own schema (uncommitted)
 

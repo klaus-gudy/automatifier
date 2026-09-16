@@ -16,8 +16,8 @@ import { AUTOMATIFIER_SCHEMA } from '@/database/schema';
  * - `PENDING` — recorded, not yet handed to the broker. The sweeper's work list.
  * - `PUBLISHED` — the broker confirmed it. Delivery is the SMS service's problem
  *   from here; this service does not learn the outcome.
- * - `SKIPPED` — deliberately not sent (no phone number on the tenant). A row
- *   rather than a silence, so "why did nobody get a text" has an answer.
+ * - `SKIPPED` — deliberately not sent (the owner has no usable phone number). A
+ *   row rather than a silence, so "why did nobody get a text" has an answer.
  * - `FAILED` — gave up after repeated publish failures. Needs a person.
  */
 export const LEASE_REMINDER_STATUSES = [
@@ -30,19 +30,24 @@ export const LEASE_REMINDER_STATUSES = [
 export type LeaseReminderStatus = (typeof LEASE_REMINDER_STATUSES)[number];
 
 /**
- * One reminder for one lease at one of the configured periods.
+ * One reminder about one lease, at one of the configured periods, addressed to
+ * one Owner.
  *
  * **An outbox, not a log.** The scan matches leases at *exactly* 24 and 1 days
  * left, so a lease that fails to publish at 08:00 is at 23 days tomorrow and
  * matches nothing — without a row here, that reminder is lost silently and
  * forever. The row is written first, published second, and retried from here.
  *
- * It is also the only thing standing between a tenant and a duplicate text:
+ * It is also the only thing standing between an owner and a duplicate text:
  * nothing downstream de-duplicates (notifier's audit table has no idempotency
  * key), and `POST /leases/expiring/scan` can be called by anyone, any number of
  * times.
  *
- * Lives in this service's own schema — see `database.config.ts`. It holds no
+ * **One row per recipient**, because an organization can have several Owners
+ * and jarvis sends lease notices to all of them. The recipient is therefore
+ * part of the identity of a reminder, not a detail of it.
+ *
+ * Lives in this service's own schema — see `database/schema.ts`. It holds no
  * foreign key to jarvis's `Lease`: that table belongs to another application's
  * migrations, and a cross-schema FK would let this service's rows block
  * jarvis's deletes.
@@ -53,13 +58,14 @@ export type LeaseReminderStatus = (typeof LEASE_REMINDER_STATUSES)[number];
  * scan does first — two scans running at once would both pass such a check.
  *
  * `leaseEndDate` is in the key on purpose. A lease whose end date is edited can
- * legitimately reach 24 days left a second time, and a `(lease, days)` key
- * would swallow that reminder without a trace.
+ * legitimately reach 24 days left a second time, and a key without it would
+ * swallow that reminder without a trace.
  */
-@Unique('uq_lease_reminder_lease_period', [
+@Unique('uq_lease_reminder_lease_period_recipient', [
   'leaseId',
   'daysLeft',
   'leaseEndDate',
+  'recipientMembershipId',
 ])
 /** The sweeper's index: it only ever asks for rows still waiting to go out. */
 @Index('idx_lease_reminder_pending', ['createdAt'], {
@@ -89,25 +95,46 @@ export class LeaseReminder {
   daysLeft: number;
 
   /*
-   * Snapshots, not lookups. jarvis's data keeps moving — a tenant changes their
-   * number, a membership is reassigned — and an audit trail that re-reads the
-   * source later answers "who would we text now", which is not the question.
-   * Null phone is why a row can be `SKIPPED`.
+   * Who this one is addressed to: an Owner of the organization, not the tenant.
+   * The message tells them *about* their tenant.
    */
-  @Column({ name: 'recipient_phone', type: 'text', nullable: true })
-  recipientPhone: string | null;
+  @Column({ name: 'recipient_membership_id', type: 'text' })
+  recipientMembershipId: string;
 
   @Column({ name: 'recipient_name', type: 'text', nullable: true })
   recipientName: string | null;
 
-  @Column({ name: 'membership_id', type: 'text' })
-  membershipId: string;
+  /**
+   * The number as it will be sent — normalised to `255…`, not as jarvis stores
+   * it. Null when the owner had none that could be normalised, which is what
+   * `SKIPPED` records.
+   */
+  @Column({ name: 'recipient_phone', type: 'text', nullable: true })
+  recipientPhone: string | null;
+
+  /*
+   * Snapshots, not lookups. jarvis's data keeps moving — a tenant changes their
+   * number, a unit is relabelled, a property is renamed — and an audit trail
+   * that re-reads the source later answers "what would we say now", which is
+   * not the question.
+   */
+  @Column({ name: 'tenant_membership_id', type: 'text' })
+  tenantMembershipId: string;
+
+  @Column({ name: 'tenant_name', type: 'text', nullable: true })
+  tenantName: string | null;
 
   @Column({ name: 'organization_id', type: 'text' })
   organizationId: string;
 
   @Column({ name: 'unit_id', type: 'text' })
   unitId: string;
+
+  @Column({ name: 'unit_label', type: 'text' })
+  unitLabel: string;
+
+  @Column({ name: 'property_name', type: 'text' })
+  propertyName: string;
 
   /** The rendered text, stored as sent rather than re-rendered on demand. */
   @Column({ name: 'message', type: 'text' })
@@ -126,6 +153,7 @@ export class LeaseReminder {
   @Column({ name: 'attempts', type: 'int', default: 0 })
   attempts: number;
 
+  /** Why the last attempt failed, or why a `SKIPPED` row was never sent. */
   @Column({ name: 'last_error', type: 'text', nullable: true })
   lastError: string | null;
 

@@ -12,7 +12,19 @@ import { configureApp } from '@/configure-app';
 /** Dates arrive as ISO strings over HTTP, not `Date`s. */
 interface ExpiringLeasesBody {
   windowDays: number[];
-  leases: { id: string; endDate: string; daysLeft: number }[];
+  leases: {
+    id: string;
+    endDate: string;
+    daysLeft: number;
+    organizationId: string;
+    membership: {
+      id: string;
+      name: string | null;
+      phone: string | null;
+      role: string;
+    };
+    unit: { id: string; label: string; propertyName: string };
+  }[];
 }
 
 /**
@@ -85,6 +97,37 @@ describe('Leases (e2e)', () => {
     );
   });
 
+  it('carries the tenant and unit each reminder has to name', async () => {
+    const body = await fetchExpiring();
+    const [lease] = body.leases;
+    // Nothing due today is not a failure; there is simply nothing to check.
+    if (!lease) return;
+
+    /*
+     * The message needs all five of these — "Habari {owner}, Mkataba wa
+     * {tenant}, mpangaji wa {property} - Unit {unit}…" — and the owner is
+     * looked up from `organizationId`, not taken off the lease.
+     */
+    expect(typeof lease.organizationId).toBe('string');
+    expect(typeof lease.membership.id).toBe('string');
+    expect(typeof lease.membership.role).toBe('string');
+    expect(typeof lease.unit.label).toBe('string');
+    expect(typeof lease.unit.propertyName).toBe('string');
+
+    // The lease on a tenant's membership: anything else means the join walked
+    // to the wrong membership and the message would name the wrong person.
+    const [row] = await app.get(DataSource).query<{ role: string }[]>(
+      `SELECT r.name AS role
+         FROM "Lease" l
+         JOIN "Membership" m ON m.id = l."membershipId"
+         JOIN "Role" r ON r.id = m."roleId"
+        WHERE l.id = $1`,
+      [lease.id],
+    );
+
+    expect(lease.membership.role).toBe(row.role);
+  });
+
   it('returns end dates as the UTC values jarvis stored', async () => {
     const [lease] = (await fetchExpiring()).leases;
     // Nothing matching means nothing to compare, not a failure.
@@ -118,6 +161,7 @@ describe('Leases (e2e)', () => {
       trigger: string;
       scannedAt: string;
       nextScheduledRunAt: string;
+      reminders: { created: number; duplicates: number; skipped: number };
     };
     const listed = await fetchExpiring();
 
@@ -132,6 +176,40 @@ describe('Leases (e2e)', () => {
     expect(new Date(scan.nextScheduledRunAt).getTime()).toBeGreaterThan(
       new Date(scan.scannedAt).getTime(),
     );
+
+    /*
+     * Every lease found is accounted for in the outbox — as a row written now,
+     * one already there from an earlier scan, or one skipped for want of a
+     * phone number. A lease that matched but produced no reminder at all would
+     * be a reminder nobody ever receives, which is the failure this whole
+     * table exists to prevent.
+     *
+     * Greater-than-or-equal because an organization can have several Owners,
+     * and each is owed a copy.
+     */
+    const { created, duplicates, skipped } = scan.reminders;
+    expect(created + duplicates + skipped).toBeGreaterThanOrEqual(
+      scan.leases.length,
+    );
+  });
+
+  it('records nothing new when the same scan runs twice', async () => {
+    // Whatever the first call found is now recorded, so the second must write
+    // nothing — the de-duplication that stops an owner being texted twice.
+    await request(app.getHttpServer())
+      .post('/api/v1/leases/expiring/scan')
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/leases/expiring/scan')
+      .expect(200);
+
+    const { reminders } = response.body as {
+      reminders: { created: number; skipped: number };
+    };
+
+    expect(reminders.created).toBe(0);
+    expect(reminders.skipped).toBe(0);
   });
 
   afterAll(async () => {

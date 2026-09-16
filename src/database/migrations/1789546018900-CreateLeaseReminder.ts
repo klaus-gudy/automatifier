@@ -25,22 +25,26 @@ export class CreateLeaseReminder1789546018900 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
       CREATE TABLE "automatifier"."lease_reminder" (
-        "id"              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-        "lease_id"        text        NOT NULL,
-        "lease_end_date"  timestamptz NOT NULL,
-        "days_left"       integer     NOT NULL,
-        "recipient_phone" text,
-        "recipient_name"  text,
-        "membership_id"   text        NOT NULL,
-        "organization_id" text        NOT NULL,
-        "unit_id"         text        NOT NULL,
-        "message"         text        NOT NULL,
-        "status"          text        NOT NULL DEFAULT 'PENDING',
-        "attempts"        integer     NOT NULL DEFAULT 0,
-        "last_error"      text,
-        "published_at"    timestamptz,
-        "created_at"      timestamptz NOT NULL DEFAULT now(),
-        "updated_at"      timestamptz NOT NULL DEFAULT now(),
+        "id"                      uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        "lease_id"                text        NOT NULL,
+        "lease_end_date"          timestamptz NOT NULL,
+        "days_left"               integer     NOT NULL,
+        "recipient_membership_id" text        NOT NULL,
+        "recipient_name"          text,
+        "recipient_phone"         text,
+        "tenant_membership_id"    text        NOT NULL,
+        "tenant_name"             text,
+        "organization_id"         text        NOT NULL,
+        "unit_id"                 text        NOT NULL,
+        "unit_label"              text        NOT NULL,
+        "property_name"           text        NOT NULL,
+        "message"                 text        NOT NULL,
+        "status"                  text        NOT NULL DEFAULT 'PENDING',
+        "attempts"                integer     NOT NULL DEFAULT 0,
+        "last_error"              text,
+        "published_at"            timestamptz,
+        "created_at"              timestamptz NOT NULL DEFAULT now(),
+        "updated_at"              timestamptz NOT NULL DEFAULT now(),
         CONSTRAINT "chk_lease_reminder_status"
           CHECK ("status" IN ('PENDING', 'PUBLISHED', 'SKIPPED', 'FAILED'))
       )
@@ -50,11 +54,14 @@ export class CreateLeaseReminder1789546018900 implements MigrationInterface {
      * The de-duplication rule, in the database because that is the only place
      * two concurrent scans cannot both win. The scan inserts with ON CONFLICT
      * DO NOTHING and publishes only the rows it actually inserted.
+     *
+     * The recipient is part of the key: an organization can have several
+     * Owners, and each is owed their own copy of the reminder.
      */
     await queryRunner.query(`
       ALTER TABLE "automatifier"."lease_reminder"
-        ADD CONSTRAINT "uq_lease_reminder_lease_period"
-        UNIQUE ("lease_id", "days_left", "lease_end_date")
+        ADD CONSTRAINT "uq_lease_reminder_lease_period_recipient"
+        UNIQUE ("lease_id", "days_left", "lease_end_date", "recipient_membership_id")
     `);
 
     /*
