@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigType } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import appConfig from '@/config/app.config';
 import databaseConfig from '@/config/database.config';
 import { DatabaseHealthService } from '@/database/database-health.service';
 import { buildDataSourceOptions } from '@/database/typeorm.config';
@@ -13,6 +14,9 @@ import { buildDataSourceOptions } from '@/database/typeorm.config';
  */
 @Module({
   imports: [
+    // Makes `appConfig.KEY` injectable here, for `DatabaseHealthService`'s
+    // probe timeout.
+    ConfigModule.forFeature(appConfig),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule.forFeature(databaseConfig)],
       inject: [databaseConfig.KEY],

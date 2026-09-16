@@ -14,11 +14,11 @@ import {
 import type { ConfirmChannel, ConsumeMessage } from 'amqplib';
 
 import {
-  HEALTH_PROBE_TIMEOUT_MS,
   OptionalDependencyHealth,
   withTimeout,
 } from '@/common/dependency-health';
 import { describePayload, SEPARATOR } from '@/common/logging/log-format';
+import appConfig from '@/config/app.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 
 /** What a feature module needs to declare to receive its events. */
@@ -74,6 +74,8 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
   constructor(
     @Inject(rabbitmqConfig.KEY)
     private readonly config: ConfigType<typeof rabbitmqConfig>,
+    @Inject(appConfig.KEY)
+    private readonly app: ConfigType<typeof appConfig>,
   ) {}
 
   onModuleInit(): void {
@@ -200,7 +202,7 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
     try {
       await withTimeout(
         this.channel.checkExchange(this.config.exchange),
-        HEALTH_PROBE_TIMEOUT_MS,
+        this.app.healthProbeTimeoutMs,
       );
       return { status: 'up', latencyMs: Date.now() - startedAt };
     } catch (cause) {
@@ -237,7 +239,9 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
       },
     );
 
-    this.logger.log(`[PUBLISHED] ${routingKey} ${describePayload(payload)}`);
+    this.logger.log(
+      `[PUBLISHED] ${routingKey} ${describePayload(payload, this.app.maxPayloadChars)}`,
+    );
   }
 
   /**
@@ -319,7 +323,9 @@ export class RabbitmqService implements OnModuleInit, OnApplicationShutdown {
     this.logger.log(
       `[INCOMING MESSAGE] ${routingKey} -> ${message.fields.exchange || '(default)'}`,
     );
-    this.logger.log(`  payload: ${describePayload(payload)}`);
+    this.logger.log(
+      `  payload: ${describePayload(payload, this.app.maxPayloadChars)}`,
+    );
 
     try {
       await handler(payload, message);

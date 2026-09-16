@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import appConfig from '@/config/app.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 import { RabbitmqService } from '@/messaging/rabbitmq.service';
 
@@ -9,7 +10,12 @@ import { RabbitmqService } from '@/messaging/rabbitmq.service';
  * else, so feature modules import it rather than each opening their own.
  */
 @Module({
-  imports: [ConfigModule.forFeature(rabbitmqConfig)],
+  imports: [
+    ConfigModule.forFeature(rabbitmqConfig),
+    // For the probe timeout and the max logged payload size — both shared
+    // app-wide settings, not RabbitMQ-specific ones.
+    ConfigModule.forFeature(appConfig),
+  ],
   providers: [RabbitmqService],
   exports: [RabbitmqService],
 })

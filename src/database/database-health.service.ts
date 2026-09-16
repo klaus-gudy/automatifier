@@ -1,12 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
-import {
-  DependencyHealth,
-  HEALTH_PROBE_TIMEOUT_MS,
-  withTimeout,
-} from '@/common/dependency-health';
+import { DependencyHealth, withTimeout } from '@/common/dependency-health';
+import appConfig from '@/config/app.config';
 
 /**
  * Probes Postgres for the health endpoint.
@@ -18,7 +16,11 @@ import {
  */
 @Injectable()
 export class DatabaseHealthService {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(appConfig.KEY)
+    private readonly config: ConfigType<typeof appConfig>,
+  ) {}
 
   async checkHealth(): Promise<DependencyHealth> {
     if (!this.dataSource.isInitialized) {
@@ -29,7 +31,7 @@ export class DatabaseHealthService {
     try {
       await withTimeout(
         this.dataSource.query('SELECT 1'),
-        HEALTH_PROBE_TIMEOUT_MS,
+        this.config.healthProbeTimeoutMs,
       );
       return { status: 'up', latencyMs: Date.now() - startedAt };
     } catch (cause) {

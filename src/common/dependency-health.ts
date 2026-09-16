@@ -42,6 +42,3 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     );
   });
 }
-
-/** How long any single dependency probe may take before it is called down. */
-export const HEALTH_PROBE_TIMEOUT_MS = 2000;

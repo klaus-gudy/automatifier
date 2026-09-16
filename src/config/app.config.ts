@@ -30,4 +30,22 @@ export default registerAs('app', () => ({
    * redaction in `log-format.ts` only catches keys it knows the names of.
    */
   logRequestBody: process.env.LOG_REQUEST_BODY === 'true',
+
+  /**
+   * Bounds how long any single dependency probe (`DatabaseHealthService`,
+   * `RabbitmqService.checkHealth`) may take before `/health` calls it down —
+   * see `withTimeout` in `common/dependency-health.ts`. 2s by default: long
+   * enough that a brief GC pause doesn't flip a live dependency to "down",
+   * short enough that `/health` itself stays fast when one really is.
+   */
+  healthProbeTimeoutMs: Number(process.env.HEALTH_PROBE_TIMEOUT_MS ?? 2000),
+
+  /**
+   * How much of a logged payload (a request body, a queue message) is printed
+   * before `truncate` (`common/logging/log-format.ts`) cuts it off. Neither
+   * has a size limit this app enforces, so printing one in full would not be a
+   * log line, it would be a denial of service against whoever is reading the
+   * terminal.
+   */
+  maxPayloadChars: Number(process.env.MAX_PAYLOAD_CHARS ?? 800),
 }));

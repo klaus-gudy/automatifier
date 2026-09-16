@@ -67,7 +67,13 @@ export class LoggingInterceptor implements NestInterceptor {
       `  from: ${request.ip ?? 'unknown'}  agent: ${request.get('user-agent') ?? '—'}`,
     );
 
-    const body = this.describeBody(request.body);
+    // Read once per request rather than in each describe* method: one call to
+    // `describeBody` and one to `describeResponse` per request either way, and
+    // this keeps `app.maxPayloadChars` from being looked up a third time if a
+    // future change logs more than these two things.
+    const maxPayloadChars = this.config.get<number>('app.maxPayloadChars', 800);
+
+    const body = this.describeBody(request.body, maxPayloadChars);
     if (body) this.logger.log(`  body: ${body}`);
 
     return next.handle().pipe(
@@ -76,7 +82,9 @@ export class LoggingInterceptor implements NestInterceptor {
         this.logger.log(
           `[RESPONSE] ${method} ${originalUrl} ${response.statusCode} +${elapsed}ms`,
         );
-        this.logger.log(`  returned: ${this.describeResponse(data)}`);
+        this.logger.log(
+          `  returned: ${this.describeResponse(data, maxPayloadChars)}`,
+        );
         this.logger.log(`${SEPARATOR}\n`);
       }),
       catchError((error: unknown) => {
@@ -116,12 +124,12 @@ export class LoggingInterceptor implements NestInterceptor {
    * A request body, redacted and truncated, or null when there is nothing to
    * show — or when `LOG_REQUEST_BODY` is off, which it is by default.
    */
-  private describeBody(body: unknown): string | null {
+  private describeBody(body: unknown, maxPayloadChars: number): string | null {
     if (!this.config.get<boolean>('app.logRequestBody')) return null;
     if (!body || typeof body !== 'object') return null;
     if (Object.keys(body).length === 0) return null;
 
-    return describePayload(body);
+    return describePayload(body, maxPayloadChars);
   }
 
   /**
@@ -130,11 +138,11 @@ export class LoggingInterceptor implements NestInterceptor {
    * Binary is described, never printed: dumping a file stream into a terminal
    * would be megabytes of mojibake per request.
    */
-  private describeResponse(data: unknown): string {
+  private describeResponse(data: unknown, maxPayloadChars: number): string {
     if (data instanceof StreamableFile) return 'StreamableFile (binary stream)';
     if (Buffer.isBuffer(data)) return `Buffer (${data.byteLength} bytes)`;
     if (data === undefined || data === null) return 'no body';
 
-    return describePayload(data);
+    return describePayload(data, maxPayloadChars);
   }
 }

@@ -19,12 +19,35 @@ as part of feature work.
       11 days left, where counting calendar dates gives 12. jarvis stores end
       dates at 00:00 UTC (03:00 EAT), so every lease's count drops by one at
       03:00 EAT. Keep this, or count calendar days in EAT?
+- [ ] **`redact()` logs every `Date` as `{}`.** `common/logging/log-format.ts`
+      rebuilds objects via `Object.entries`, which is empty for a `Date`
+      (its fields are non-enumerable getters). Every lease's `startDate` and
+      `endDate` show as `{}` in the request/response log, though the real
+      value is still returned in the HTTP response itself. Pre-existing, found
+      while checking `MAX_PAYLOAD_CHARS`.
 - [ ] **Scan runs once per process.** Two replicas would each scan at 08:00.
       Harmless while it only logs; needs a lock or a single scheduler instance
       before the scan sends anything.
 - [ ] **Next increment** — to be decided.
 
 ## Log
+
+### 2026-09-16 — Two more settings made configurable (uncommitted)
+
+- `HEALTH_PROBE_TIMEOUT_MS` (default 2000) and `MAX_PAYLOAD_CHARS` (default
+  800) join `app.config.ts`, replacing the constants of the same values that
+  used to be hardcoded in `dependency-health.ts` and `log-format.ts`.
+  `DatabaseHealthService` and `RabbitmqService` now inject `appConfig.KEY` for
+  the timeout; `LoggingInterceptor` and `RabbitmqService` pass
+  `maxPayloadChars` into `describePayload` explicitly (it has no default of
+  its own any more, so there is exactly one place the number can drift from).
+- `.env.example` also gained `EVENT_EXCHANGE` and `EVENT_QUEUE` — already read
+  by `rabbitmq.config.ts`, just missing from the template.
+- Verified directly: `app.config()` reflects the env vars with correct
+  defaults; `withTimeout` actually gives up at the configured ms (50ms
+  operation: succeeds at 1000ms, times out at 10ms); a 40-char
+  `MAX_PAYLOAD_CHARS` visibly truncates a real logged response that the
+  default 800 leaves whole.
 
 ### 2026-09-15 — Daily lease expiry scan at 08:00 Tanzania time (uncommitted)
 

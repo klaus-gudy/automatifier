@@ -31,15 +31,6 @@ const REDACTED_KEYS = [
   'apikey',
 ];
 
-/**
- * How much of a payload to print.
- *
- * A queue message has no size limit this app enforces at all. Printing one in
- * full would not be a log line, it would be a denial of service against
- * whoever is reading the terminal.
- */
-export const MAX_PAYLOAD_CHARS = 800;
-
 /** Replaces the value of any sensitive-looking key, at any depth. */
 export function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => redact(item));
@@ -53,14 +44,21 @@ export function redact(value: unknown): unknown {
   );
 }
 
-/** Cuts a string to `MAX_PAYLOAD_CHARS`, saying how much was left out. */
-export function truncate(value: string, max = MAX_PAYLOAD_CHARS): string {
+/**
+ * Cuts a string to `max` chars, saying how much was left out.
+ *
+ * `max` has no default here — it comes from `app.maxPayloadChars`
+ * (`config/app.config.ts`), and every caller passes it explicitly rather than
+ * this file keeping its own copy of the number. Two defaults for the same
+ * setting are how one gets changed and the other doesn't.
+ */
+export function truncate(value: string, max: number): string {
   return value.length > max
     ? `${value.slice(0, max)}… (${value.length} chars total)`
     : value;
 }
 
 /** A payload as one redacted, truncated line. */
-export function describePayload(value: unknown): string {
-  return truncate(JSON.stringify(redact(value)));
+export function describePayload(value: unknown, max: number): string {
+  return truncate(JSON.stringify(redact(value)), max);
 }

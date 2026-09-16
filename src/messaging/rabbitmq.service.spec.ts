@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { ConsumeMessage } from 'amqplib';
 
+import appConfig from '@/config/app.config';
 import rabbitmqConfig from '@/config/rabbitmq.config';
 import { RabbitmqService } from '@/messaging/rabbitmq.service';
 
@@ -64,6 +65,7 @@ describe('RabbitmqService acknowledgement policy', () => {
       providers: [
         RabbitmqService,
         { provide: rabbitmqConfig.KEY, useValue: rabbitmqConfig() },
+        { provide: appConfig.KEY, useValue: appConfig() },
       ],
     }).compile();
 
