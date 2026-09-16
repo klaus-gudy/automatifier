@@ -78,11 +78,15 @@ Steps, in order:
 3. [x] **Done 2026-09-16.** Scan inserts `PENDING` rows with `ON CONFLICT DO
        NOTHING` and publishes nothing. Verified against real data: first scan
        wrote 3 rows, second wrote 0 and reported 3 duplicates.
-4. [ ] Point at jarvis's broker, enable it, publish the rows that actually
-       inserted, mark `PUBLISHED` on broker confirm.
-5. [ ] SMS consumer in notifier.
-6. [ ] Sweeper retries `PENDING` rows — the part that makes this an outbox
-       rather than a log.
+4. [x] **Done 2026-09-16.** Publishing to jarvis's broker, `PUBLISHED` on
+       confirm. Verified by reading the queue: three messages, correct
+       payloads, `persistent`, routing key `lease.expiring`.
+5. [ ] SMS consumer in notifier. **Deliberately not started** — until it
+       exists, reminders accumulate in `NOTIFIER_SMS_QUEUE`, which is durable,
+       so nothing is lost and nothing is delivered.
+6. [x] **Done 2026-09-16.** Sweeper retries `PENDING` rows every ten minutes.
+       Verified by resetting a row to `PENDING` with a window matching no
+       lease: only the sweeper could have published it, and it did.
 
 Table shape: `lease_id`, `lease_end_date`, `days_left`, snapshots of
 `recipient_phone` / `recipient_name` / `organization_id` / `unit_id`, the
@@ -103,6 +107,48 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-16 — Publishing + sweeper (uncommitted)
+
+- Reminders are published to jarvis's broker (`localhost:5682`) on
+  `automatifier.events` with routing key `lease.expiring`, payload exactly
+  notifier's `SendSmsDto` plus `lease_id` / `reminder_id` for tracing.
+  `.env` now has `RABBITMQ_ENABLED=true` and the 5682 URL.
+- **`NOTIFIER_SMS_QUEUE` already existed**, declared by jarvis against
+  `jarvis.sms.dlx` and bound `#` to a `jarvis.sms` exchange. The planned
+  "producer declares the queue" was therefore wrong: asserting it here with a
+  different dead-letter exchange is refused with `PRECONDITION_FAILED`, which
+  closed the channel and left the connection retrying in a loop.
+  `RabbitmqService.bindConsumerQueue` now only *binds* the existing queue to
+  this service's exchange. One queue, two producers.
+- `LeaseReminderSweeperService` retries `PENDING` rows on
+  `LEASE_REMINDER_SWEEP_CRON` (default every ten minutes), giving up to
+  `FAILED` after `LEASE_REMINDER_MAX_ATTEMPTS`.
+- Rows are claimed with `UPDATE … FOR UPDATE SKIP LOCKED`, so a scan and a
+  sweep running together take different rows. Delivery is **at least once**: a
+  process dying between the broker's confirm and the `PUBLISHED` update
+  republishes that row later.
+
+Three bugs found by running it, all fixed:
+
+- **Blank env values were not defaults.** `EVENT_EXCHANGE=` resolved to the
+  AMQP *default exchange*, which no client may declare — the broker refused and
+  the unhandled channel error killed the process. `??` only falls back on
+  `undefined`. `stringEnv` / `numberEnv` in `config/env.ts` now treat blank as
+  unset everywhere, which also fixes a blank `PORT=` binding a random port and
+  a blank `RABBITMQ_PREFETCH=` meaning unlimited.
+- **A channel error killed the app.** `ChannelWrapper` is an EventEmitter, and
+  an unhandled `error` event throws. Now logged; the library reopens the
+  channel and replays every `addSetup`.
+- **`UPDATE … RETURNING` comes back as `[rows, rowCount]`**, not rows, unlike a
+  SELECT through the same method. The claim loop iterated the array and the
+  count, publishing two messages whose every field was `undefined` —
+  `JSON.stringify` simply dropped them. Fixed, and the publish path now refuses
+  any reminder missing an id, phone or message.
+
+Also: a publish is bounded by a 10s timeout. `amqp-connection-manager` buffers
+a publish made while disconnected and settles only on confirm, so an HTTP-
+triggered scan hung for minutes with the broker unreachable instead of failing.
 
 ### 2026-09-16 — Reminders recorded, enriched lease query (uncommitted)
 
