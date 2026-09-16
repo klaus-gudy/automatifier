@@ -28,7 +28,70 @@ as part of feature work.
 - [ ] **Scan runs once per process.** Two replicas would each scan at 08:00.
       Harmless while it only logs; needs a lock or a single scheduler instance
       before the scan sends anything.
-- [ ] **Next increment** — to be decided.
+- [ ] **A `prisma migrate reset` in jarvis becomes a shared-fate event** once
+      the reminder table lives in that database. Prisma manages `public` only,
+      and `prisma migrate deploy` (jarvis's only migration script) leaves a
+      sibling schema alone — but anything that drops and recreates the database
+      takes `automatifier.lease_reminder` with it.
+- [ ] **Next increment** — the plan below.
+
+## Planned: lease reminders (agreed 2026-09-16, not started)
+
+The 08:00 scan records each reminder in a table it owns, then publishes an SMS
+event. The table is not bookkeeping for its own sake: periods match *exactly*
+24 and 1 days left, so a broker outage at 08:00 loses that day's reminders
+permanently — tomorrow the lease is at 23 days and matches nothing. It is an
+outbox first, a dedupe ledger second (nothing downstream dedupes: notifier's
+audit table has no idempotency key, and `POST /leases/expiring/scan` makes
+double-sending one click away).
+
+Decisions taken:
+
+- **Where:** an `automatifier` schema inside jarvis's database, one connection.
+  (The alternative — automatifier's own DB on 5440 — was not chosen; that
+  container stays unused.)
+- **Broker:** jarvis's, `localhost:5682`, where notifier already listens.
+  Automatifier's `.env` currently points at 5683 with `RABBITMQ_ENABLED=false`.
+- **Transport:** publish to `NOTIFIER_SMS_QUEUE`, declared and bound by
+  automatifier (producer owns the queue, as jarvis does for mail — notifier
+  only `checkQueue`s). Notifier gains an SMS consumer mirroring its email one.
+
+Steps, in order:
+
+1. [x] **Done 2026-09-16.** DBA step (user ran): `automatifier` schema created
+       and owned by the role, `default_transaction_read_only` reset. Verified:
+       it can create and drop a table in its own schema, while
+       `UPDATE "Lease"` fails with *permission denied for table Lease* — the
+       grants, not the session flag, are what keep jarvis's tables unwritable.
+2. [ ] `lease_reminder` entity + hand-written migration. DataSource gets
+       `schema: 'automatifier'`; the read-only `Lease` entity gets an explicit
+       `schema: 'public'`, so TypeORM's own `migrations` table lands in the new
+       schema rather than jarvis's.
+3. [ ] Scan inserts `PENDING` rows with `ON CONFLICT DO NOTHING`, publishes
+       nothing yet. Verify dedupe against repeated real scans.
+4. [ ] Point at jarvis's broker, enable it, publish the rows that actually
+       inserted, mark `PUBLISHED` on broker confirm.
+5. [ ] SMS consumer in notifier.
+6. [ ] Sweeper retries `PENDING` rows — the part that makes this an outbox
+       rather than a log.
+
+Table shape: `lease_id`, `lease_end_date`, `days_left`, snapshots of
+`recipient_phone` / `recipient_name` / `organization_id` / `unit_id`, the
+rendered `message`, `status` (`PENDING` → `PUBLISHED` | `SKIPPED` | `FAILED`),
+`attempts`, `last_error`, `published_at`. Unique on
+`(lease_id, days_left, lease_end_date)` — the end date is in the key because an
+edited end date can legitimately reach 24 days again, and a
+`(lease_id, days_left)` key would silently suppress that reminder.
+
+Two things that will bite if forgotten:
+
+- **Never run `migration:generate`** against this database. It would diff
+  Prisma's schema against the partial `Lease` mapping and emit drops for every
+  column not mapped. Hand-written `migration:create` only.
+- **Phone format.** jarvis stores `0783468181`; notifier's
+  `stripPhoneFormatting` only removes spaces, dashes, brackets and `+`, so it
+  never converts the leading `0` to `255`. Automatifier must normalize before
+  publishing, and the snapshot records what was actually sent.
 
 ## Log
 
