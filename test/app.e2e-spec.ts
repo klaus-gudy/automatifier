@@ -30,7 +30,14 @@ describe('Health (e2e)', () => {
   });
 
   it('GET /health reports every dependency up', async () => {
-    const response = await request(app.getHttpServer()).get('/health');
+    /*
+     * Polled, not probed once. `RabbitmqService` starts its connection without
+     * awaiting it on purpose, so the app serves HTTP while the broker is still
+     * coming up — which means `/health` legitimately answers 503 for the first
+     * moments of a process's life, and a single immediate call is a race this
+     * test used to win only because the broker was switched off.
+     */
+    const response = await waitForHealthy();
 
     // A 503 here means a dependency is genuinely down, and the body says which.
     expect(response.status).toBe(200);
@@ -45,6 +52,23 @@ describe('Health (e2e)', () => {
     // configuration, not a broker that failed to answer.
     expect(['up', 'disabled']).toContain(body.checks.rabbitmq.status);
   });
+
+  /**
+   * Asks until every dependency answers, or gives up and returns the last
+   * reply so the assertions can say which one never came up.
+   */
+  const waitForHealthy = async (attempts = 40) => {
+    let response = await request(app.getHttpServer()).get('/health');
+
+    for (let attempt = 1; attempt < attempts; attempt += 1) {
+      if (response.status === 200) break;
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      response = await request(app.getHttpServer()).get('/health');
+    }
+
+    return response;
+  };
 
   it('serves health outside the API prefix', async () => {
     // The liveness probe must not move when API_PREFIX changes — a platform
