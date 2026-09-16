@@ -1,6 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
-import { booleanEnv } from '@/config/env';
+import { booleanEnv, numberEnv, stringEnv } from '@/config/env';
 
 /**
  * Postgres connection settings, as a namespaced config factory.
@@ -12,12 +12,17 @@ import { booleanEnv } from '@/config/env';
  */
 export default registerAs('database', () => ({
   /** Full connection string. Takes precedence over the discrete fields. */
-  url: process.env.DATABASE_URL ?? '',
-  host: process.env.DATABASE_HOST ?? 'localhost',
-  port: Number(process.env.DATABASE_PORT ?? 5432),
-  username: process.env.DATABASE_USER ?? 'postgres',
+  url: stringEnv('DATABASE_URL', ''),
+  host: stringEnv('DATABASE_HOST', 'localhost'),
+  port: numberEnv('DATABASE_PORT', 5432),
+  username: stringEnv('DATABASE_USER', 'postgres'),
+  /*
+   * Left on `??`, unlike its neighbours: an empty password is a real state
+   * here. `typeorm.config.ts` turns `''` into `undefined` so `pg` falls back to
+   * peer or trust auth rather than sending an empty credential.
+   */
   password: process.env.DATABASE_PASSWORD ?? '',
-  name: process.env.DATABASE_NAME ?? 'automatifier',
+  name: stringEnv('DATABASE_NAME', 'automatifier'),
 
   /**
    * Runs pending migrations at boot. **Off unless set to `true`.**

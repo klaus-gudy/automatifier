@@ -1,16 +1,20 @@
 import { registerAs } from '@nestjs/config';
 
-export default registerAs('app', () => ({
-  env: process.env.NODE_ENV ?? 'development',
+import { numberEnv, stringEnv } from '@/config/env';
 
-  port: Number(process.env.PORT ?? 3000),
+export default registerAs('app', () => ({
+  env: stringEnv('NODE_ENV', 'development'),
+
+  // Through `numberEnv` rather than `Number(...)`: `Number('')` is 0, and a
+  // blank `PORT=` would bind a random free port rather than the default.
+  port: numberEnv('PORT', 3000),
 
   /**
    * Prefixed onto every HTTP route except `health` — see `configure-app.ts`. A
    * platform's liveness probe should not need to know or agree on an API
    * version to find it, so it stays reachable at bare `/health` regardless.
    */
-  apiPrefix: process.env.API_PREFIX ?? 'api/v1',
+  apiPrefix: stringEnv('API_PREFIX', 'api/v1'),
 
   /**
    * Whether to serve the OpenAPI docs.
@@ -38,7 +42,7 @@ export default registerAs('app', () => ({
    * enough that a brief GC pause doesn't flip a live dependency to "down",
    * short enough that `/health` itself stays fast when one really is.
    */
-  healthProbeTimeoutMs: Number(process.env.HEALTH_PROBE_TIMEOUT_MS ?? 2000),
+  healthProbeTimeoutMs: numberEnv('HEALTH_PROBE_TIMEOUT_MS', 2000),
 
   /**
    * How much of a logged payload (a request body, a queue message) is printed
@@ -47,5 +51,5 @@ export default registerAs('app', () => ({
    * log line, it would be a denial of service against whoever is reading the
    * terminal.
    */
-  maxPayloadChars: Number(process.env.MAX_PAYLOAD_CHARS ?? 800),
+  maxPayloadChars: numberEnv('MAX_PAYLOAD_CHARS', 800),
 }));

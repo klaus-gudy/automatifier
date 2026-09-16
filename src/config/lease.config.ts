@@ -1,6 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
-import { integerListEnv } from '@/config/env';
+import { integerListEnv, numberEnv } from '@/config/env';
 
 export default registerAs('lease', () => ({
   /**
@@ -44,4 +44,47 @@ export default registerAs('lease', () => ({
    */
   expiryScanTimeZone:
     process.env.LEASE_EXPIRY_SCAN_TIMEZONE?.trim() || 'Africa/Dar_es_Salaam',
+
+  /**
+   * The queue reminders are published to, **owned by this service and consumed
+   * by notifier**. It must match notifier's `RABBITMQ_SMS_QUEUE` exactly:
+   * notifier only checks the queue exists, so a mismatch is not a second queue,
+   * it is `checkQueue` failing against one that was never declared.
+   *
+   * Caps, naming who consumes — the house convention that tells a queue apart
+   * from a routing key at a glance.
+   */
+  smsQueue: process.env.LEASE_SMS_QUEUE?.trim() || 'NOTIFIER_SMS_QUEUE',
+
+  /** Lower.dotted, naming what happened, as every routing key here does. */
+  smsRoutingKey: process.env.LEASE_SMS_ROUTING_KEY?.trim() || 'lease.expiring',
+
+  /**
+   * How often stuck reminders are retried.
+   *
+   * The scan publishes what it records, so this exists for everything that
+   * *failed* to publish — a broker that was down at 08:00, a process that died
+   * mid-batch. Ten minutes rather than daily, because the whole point of the
+   * outbox is that a reminder is not lost until the day it refers to has
+   * passed.
+   */
+  reminderSweepCron:
+    process.env.LEASE_REMINDER_SWEEP_CRON?.trim() || '*/10 * * * *',
+
+  /**
+   * How many reminders one publish pass claims. Bounds the work a single tick
+   * does, so a backlog drains over several passes instead of one long
+   * transaction holding rows locked.
+   */
+  reminderBatchSize: numberEnv('LEASE_REMINDER_BATCH_SIZE', 50),
+
+  /**
+   * Publish attempts before a reminder is marked `FAILED` and left alone.
+   *
+   * Without a ceiling, a reminder that can never be published — a malformed
+   * payload the broker rejects, a queue deleted underneath it — is retried
+   * every ten minutes forever, and the log that would have told someone is
+   * buried under its own repetition.
+   */
+  reminderMaxAttempts: numberEnv('LEASE_REMINDER_MAX_ATTEMPTS', 5),
 }));

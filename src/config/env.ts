@@ -28,6 +28,45 @@ export function booleanEnv(name: string, defaultValue: boolean): boolean {
 }
 
 /**
+ * Reads a text setting, treating blank the same as unset.
+ *
+ * `process.env.X ?? 'default'` looks equivalent and is not: `??` falls back
+ * only on `undefined`, so a `.env` shipping `X=` — which is exactly how
+ * `.env.example` ships every key — yields an empty string that every caller
+ * then treats as a real value. One of those empty strings is the AMQP default
+ * exchange, which cannot be declared: the broker answers `ACCESS_REFUSED`, the
+ * channel dies, and the process goes with it.
+ */
+export function stringEnv(name: string, defaultValue: string): string {
+  return process.env[name]?.trim() || defaultValue;
+}
+
+/**
+ * Reads a numeric setting, treating blank the same as unset and refusing
+ * anything that is not a number.
+ *
+ * `Number(process.env.X ?? 10)` has the same blank problem with a worse
+ * ending, because `Number('')` is `0` rather than `NaN` — a blank `PORT=`
+ * binds a random port, a blank `RABBITMQ_PREFETCH=` means unlimited in-flight
+ * messages, and both look like a setting that was honoured.
+ */
+export function numberEnv(name: string, defaultValue: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return defaultValue;
+
+  const value = Number(raw);
+
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `${name} must be a number (or left blank for ${defaultValue}), ` +
+        `got "${raw}"`,
+    );
+  }
+
+  return value;
+}
+
+/**
  * Reads a comma-separated list of whole numbers, zero or greater — `24,1`.
  *
  * Blank or unset takes the default, for the same reason as `booleanEnv`. Every
