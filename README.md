@@ -118,3 +118,30 @@ Request bodies are off by default — set `LOG_REQUEST_BODY=true` to include the
 npm test          # unit
 npm run test:e2e  # needs `docker compose up -d` — it connects for real
 ```
+
+## Lease reminders
+
+The daily scan (`LEASE_EXPIRY_SCAN_CRON`, `08:00` `LEASE_EXPIRY_SCAN_TIMEZONE`
+by default) records a reminder per expiring lease and publishes it as an SMS
+event on jarvis's broker, for notifier's `NOTIFIER_SMS_QUEUE` to pick up.
+
+Check what's sitting in the queue:
+
+```bash
+docker exec jarvis-mq rabbitmqctl list_queues name messages | grep NOTIFIER_SMS
+```
+
+Purge it — needed after a manual or test scan, since anything left there goes
+out as a real text the moment a consumer exists:
+
+```bash
+docker exec jarvis-mq rabbitmqctl purge_queue NOTIFIER_SMS_QUEUE
+```
+
+Clear recorded reminders — needed to re-run the same scan and get new
+publishes, since a lease already recorded for a period is treated as already
+reminded and is not published again:
+
+```bash
+docker exec jarvis-db psql -U automatifier -d jarvis -c "DELETE FROM automatifier.lease_reminder"
+```
