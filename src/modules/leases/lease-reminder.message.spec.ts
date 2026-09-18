@@ -73,4 +73,72 @@ describe('renderLeaseReminderMessage', () => {
       'Mkataba wa mpangaji,',
     );
   });
+
+  describe('the day before it ends', () => {
+    const tomorrow = { ...lease, daysLeft: 1 };
+
+    it('says "kesho" and asks the owner to call the tenant', () => {
+      expect(
+        renderLeaseReminderMessage(tomorrow, 'Yohana Madadi', timeZone),
+      ).toBe(
+        'Habari Yohana Madadi, Mkataba wa James Mchaga, mpangaji wa ' +
+          'Old Baruti Estate - Unit Z1, unamalizika kesho, ' +
+          'tarehe 10 October 2026. ' +
+          'Tafadhali mpigie simu James Mchaga kwa namba +255712345678.',
+      );
+    });
+
+    it('never says "baada ya siku 1", which is the vague phrasing this replaces', () => {
+      expect(renderLeaseReminderMessage(tomorrow, 'Y', timeZone)).not.toContain(
+        'baada ya siku',
+      );
+    });
+
+    it('normalizes the tenant number it tells the owner to dial', () => {
+      // The owner dials this by hand, so it must be a number, not whatever
+      // shape jarvis happened to store.
+      const stored = {
+        ...tomorrow,
+        membership: { ...tomorrow.membership, phone: '+255 712 345 678' },
+      };
+
+      expect(renderLeaseReminderMessage(stored, 'Y', timeZone)).toContain(
+        'kwa namba +255712345678.',
+      );
+    });
+
+    it('keeps an unrecognisable number rather than inventing one', () => {
+      const odd = {
+        ...tomorrow,
+        membership: { ...tomorrow.membership, phone: '476978247' },
+      };
+
+      expect(renderLeaseReminderMessage(odd, 'Y', timeZone)).toContain(
+        'kwa namba 476978247.',
+      );
+    });
+
+    it('drops the whole request when the tenant has no number', () => {
+      const unreachable = {
+        ...tomorrow,
+        membership: { ...tomorrow.membership, phone: null },
+      };
+      const message = renderLeaseReminderMessage(unreachable, 'Y', timeZone);
+
+      // Better to say only what is true than to ask for a call to nowhere.
+      expect(message).not.toContain('Tafadhali');
+      expect(message).not.toContain('null');
+      expect(
+        message.endsWith('unamalizika kesho, tarehe 10 October 2026.'),
+      ).toBe(true);
+    });
+  });
+
+  it('says "leo" on the last day, never "baada ya siku 0"', () => {
+    const today = { ...lease, daysLeft: 0 };
+    const message = renderLeaseReminderMessage(today, 'Yohana', timeZone);
+
+    expect(message).toContain('unamalizika leo, tarehe 10 October 2026.');
+    expect(message).toContain('Tafadhali mpigie simu James Mchaga kwa namba');
+  });
 });

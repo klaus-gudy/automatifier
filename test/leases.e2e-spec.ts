@@ -52,6 +52,10 @@ describe('Leases (e2e)', () => {
     return response.body as ExpiringLeasesBody;
   };
 
+  /** The zone the service counts days in — the SQL below must use the same. */
+  const scanTimeZone = () =>
+    app.get<ConfigType<typeof leaseConfig>>(leaseConfig.KEY).expiryScanTimeZone;
+
   it('echoes the configured LEASE_EXPIRY_DAYS as windowDays, furthest first', async () => {
     const { expiryDays } = app.get<ConfigType<typeof leaseConfig>>(
       leaseConfig.KEY,
@@ -85,11 +89,20 @@ describe('Leases (e2e)', () => {
      * SQL, and require the ids to match.
      */
     const rows = await app.get(DataSource).query<{ id: string }[]>(
+      /*
+       * Calendar days in the reminder zone, matching the service — the date the
+       * lease ends minus today's date. Elapsed-time-rounded-down was a
+       * different number: at 11:57 EAT on 18 September a lease ending on the
+       * 20th had 39 hours left, which floors to 1 and is 2 days away.
+       */
       `SELECT id FROM "Lease"
         WHERE "startDate" <= (now() AT TIME ZONE 'UTC')
           AND "endDate" >= (now() AT TIME ZONE 'UTC')
-          AND floor(extract(epoch FROM "endDate" - (now() AT TIME ZONE 'UTC')) / 86400) = ANY($1::int[])`,
-      [body.windowDays],
+          AND (
+                ("endDate" AT TIME ZONE 'UTC' AT TIME ZONE $2)::date
+              - (now() AT TIME ZONE $2)::date
+              ) = ANY($1::int[])`,
+      [body.windowDays, scanTimeZone()],
     );
 
     expect(body.leases.map((lease) => lease.id).sort()).toEqual(

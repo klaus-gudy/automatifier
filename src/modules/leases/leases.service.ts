@@ -1,7 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import leaseConfig from '@/config/lease.config';
 import { JARVIS_SCHEMA } from '@/database/schema';
 import { ExpiringLeaseDto } from '@/modules/leases/dto/expiring-leases-response.dto';
 import { Lease } from '@/modules/leases/lease.entity';
@@ -19,16 +21,35 @@ import { Lease } from '@/modules/leases/lease.entity';
 const NOW_UTC = `(now() AT TIME ZONE 'UTC')`;
 
 /**
- * Whole days until the lease ends, rounded down — the same count jarvis's
- * `leaseExpiry` shows, so "24 days left" means the same lease in both apps.
+ * Days until the lease ends, counted as **calendar days** in the reminder time
+ * zone (`$2`): the date it ends, minus today's date.
  *
- * Computed by the database, in the same statement as the filter, rather than
- * in Node afterwards. Matching an *exact* count makes the two clocks matter: a
- * lease the database sees at 24.00001 days would be 23.99999 by the time Node
- * measured it a few milliseconds later, and would be reported with a
- * `daysLeft` that is not one of the periods it was selected for.
+ * It used to be elapsed time rounded down — `floor((endDate - now) / 1 day)`,
+ * matching jarvis's own `leaseExpiry`. That is a different number, and the
+ * difference is not academic. On 18 September at 11:57 EAT a lease ending
+ * 2026-09-20 has 39 hours left, so the old expression called it **1 day** while
+ * every human involved calls it 2 — and "1 day left" then meant "some time in
+ * the next 24 to 48 hours", which cannot be phrased as "ends tomorrow" in a
+ * message. Counting dates makes `daysLeft = 1` mean tomorrow, exactly.
+ *
+ * **This now disagrees with jarvis's screens by one day** for any lease whose
+ * end date is stored at 00:00 UTC, which is all of them. Deliberate: the number
+ * in a text message has to match the reader's calendar.
+ *
+ * Two conversions, not one. jarvis stores end dates as zone-less timestamps
+ * holding UTC, so `AT TIME ZONE 'UTC'` reads the stored value as an instant and
+ * the second `AT TIME ZONE $2` moves that instant into local time — where
+ * midnight UTC is 03:00, and therefore still the same date the tenant would
+ * name. Casting the UTC value straight to a date would be a day early for every
+ * lease after 21:00 local.
+ *
+ * Computed by the database, in the same statement as the filter, so the value
+ * reported is the value that was matched on.
  */
-const DAYS_LEFT = `CAST(FLOOR(EXTRACT(EPOCH FROM (lease."endDate" - ${NOW_UTC})) / 86400) AS integer)`;
+const DAYS_LEFT = `(
+        (lease."endDate" AT TIME ZONE 'UTC' AT TIME ZONE $2)::date
+      - (now() AT TIME ZONE $2)::date
+      )`;
 
 /** Matches jarvis's `isOwnerRole`: role names are editable free text. */
 const OWNER_ROLE_NAME = 'owner';
@@ -66,6 +87,13 @@ export class LeasesService {
   constructor(
     @InjectRepository(Lease)
     private readonly leases: Repository<Lease>,
+    /*
+     * For the time zone the day count is measured in, and nothing else. It is
+     * not a caller's choice: "how many days left" has one answer per service,
+     * the one its messages are written in.
+     */
+    @Inject(leaseConfig.KEY)
+    private readonly config: ConfigType<typeof leaseConfig>,
   ) {}
 
   /**
@@ -128,7 +156,8 @@ export class LeasesService {
           AND lease."endDate"   >= ${NOW_UTC}
           AND ${DAYS_LEFT} = ANY($1::int[])
         ORDER BY lease."endDate" ASC`,
-      [periods],
+      // $2 is the zone `DAYS_LEFT` counts dates in; it reads it positionally.
+      [periods, this.config.expiryScanTimeZone],
     );
 
     return rows.map(toExpiringLeaseDto);
