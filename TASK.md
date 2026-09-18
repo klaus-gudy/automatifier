@@ -14,23 +14,12 @@ as part of feature work.
       log; left untouched.
 - [ ] **Writing dates into jarvis's `timestamp` columns is not handled.** The
       UTC fix covers reads only. Needed before this service writes a date.
-- [ ] **Decide how "days left" should count.** It is exact time rounded down,
-      as jarvis does: on 2026-09-15 at 23:35 EAT a lease ending 2026-09-27 has
-      11 days left, where counting calendar dates gives 12. jarvis stores end
-      dates at 00:00 UTC (03:00 EAT), so every lease's count drops by one at
-      03:00 EAT. Keep this, or count calendar days in EAT?
 - [ ] **`redact()` logs every `Date` as `{}`.** `common/logging/log-format.ts`
       rebuilds objects via `Object.entries`, which is empty for a `Date`
       (its fields are non-enumerable getters). Every lease's `startDate` and
       `endDate` show as `{}` in the request/response log, though the real
       value is still returned in the HTTP response itself. Pre-existing, found
       while checking `MAX_PAYLOAD_CHARS`.
-- [ ] **Confirm the date in the message.** The agreed example reads "tarehe 11
-      October 2026" for a lease whose `endDate` is 2026-10-10. The render uses
-      `endDate` itself, giving "10 October 2026". jarvis starts a renewal on
-      `endDate + 1 day`, so +1 would read as "the day the next lease starts"
-      rather than the day this one ends — but if owners expect the vacate date,
-      it is a one-line change.
 - [ ] **Scan runs once per process.** Two replicas would each scan at 08:00.
       Harmless while it only logs; needs a lock or a single scheduler instance
       before the scan sends anything.
@@ -41,7 +30,7 @@ as part of feature work.
       takes `automatifier.lease_reminder` with it.
 - [ ] **Next increment** — the plan below.
 
-## Planned: lease reminders (agreed 2026-09-16, not started)
+## Plan: lease reminders (agreed 2026-09-16; steps 1-4 and 6 done)
 
 The 08:00 scan records each reminder in a table it owns, then publishes an SMS
 event. The table is not bookkeeping for its own sake: periods match *exactly*
@@ -92,9 +81,10 @@ Table shape: `lease_id`, `lease_end_date`, `days_left`, snapshots of
 `recipient_phone` / `recipient_name` / `organization_id` / `unit_id`, the
 rendered `message`, `status` (`PENDING` → `PUBLISHED` | `SKIPPED` | `FAILED`),
 `attempts`, `last_error`, `published_at`. Unique on
-`(lease_id, days_left, lease_end_date)` — the end date is in the key because an
-edited end date can legitimately reach 24 days again, and a
-`(lease_id, days_left)` key would silently suppress that reminder.
+`(lease_id, days_left, lease_end_date, recipient_membership_id)` — the end date
+is in the key because an edited end date can legitimately reach 24 days again,
+and the recipient because an organization can have several Owners, each owed
+their own copy.
 
 Two things that will bite if forgotten:
 
@@ -107,6 +97,30 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-18 — Calendar day counting, and a "kesho" message (uncommitted)
+
+- **`daysLeft` now counts calendar days in the reminder time zone**, not
+  elapsed time rounded down. On 18 September at 11:57 EAT a lease ending
+  2026-09-20 had 39 hours left, which the old `floor((endDate - now) / 1 day)`
+  called **1 day** and everyone else calls 2. Every count moves up by one, and
+  `LEASE_EXPIRY_DAYS=24,1` now means what it reads as: 24 calendar days, and
+  tomorrow.
+- **This disagrees with jarvis's screens by a day**, which previously matched on
+  purpose. Accepted: the number in a text has to match the reader's calendar.
+  It also removes the old oddity where every count dropped at 03:00 EAT rather
+  than at midnight.
+- The SQL converts twice — `AT TIME ZONE 'UTC' AT TIME ZONE $2` — because
+  jarvis's end dates are zone-less timestamps holding UTC. Casting straight to
+  a date would be a day early for every lease after 21:00 local.
+- **New message shapes at 1 and 0 days**, which is what calendar counting makes
+  possible:
+  - `… unamalizika kesho, tarehe 20 September 2026. Tafadhali mpigie simu
+    Florencia kwa namba +255685185247.`
+  - `… unamalizika leo, tarehe …` with the same request.
+  A day out, the owner has to act rather than note, so the message carries the
+  tenant's number, normalised to international form and dropped entirely when
+  there is none — "kwa namba null" helps nobody.
 
 ### 2026-09-16 — Publishing + sweeper (uncommitted)
 
