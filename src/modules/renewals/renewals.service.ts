@@ -5,7 +5,7 @@ import { Repository } from 'typeorm';
 
 import leaseConfig from '@/config/lease.config';
 import { JARVIS_SCHEMA } from '@/database/schema';
-import { Lease } from '@/modules/leases/lease.entity';
+import { Lease, type LeaseStatus } from '@/modules/leases/lease.entity';
 import { OverdueRenewalLeaseDto } from '@/modules/renewals/dto/overdue-renewals-response.dto';
 
 /** See `NOW_UTC` in `leases.service.ts` for why "now" comes from SQL. */
@@ -20,6 +20,8 @@ const DAYS_OVERDUE = `(
         (now() AT TIME ZONE $1)::date
       - (lease."endDate" AT TIME ZONE 'UTC' AT TIME ZONE $1)::date
       )`;
+
+const ACTIVE: LeaseStatus = 'Active';
 
 interface OverdueRenewalRow {
   id: string;
@@ -50,13 +52,12 @@ export class RenewalsService {
   ) {}
 
   /**
-   * Leases whose `endDate` has passed but that are still "live" — nothing has
-   * renewed them.
+   * Leases jarvis still marks `Active` although their `endDate` has passed —
+   * the ones waiting on a renewal decision.
    *
-   * jarvis's `Lease` has no status column: a lease is superseded only when
-   * another lease points back at it through `renewedFromId`. So "ended and
-   * still active" is `endDate < now` with no successor. Without the
-   * `NOT EXISTS`, every lease that was ever renewed would be listed forever.
+   * Keyed on jarvis's `status` rather than inferred from `renewedFromId`: a
+   * renewed lease is `Renewed`, a closed one `Ended`, so neither needs a
+   * separate exclusion, and this agrees with what jarvis's own screens show.
    *
    * Raw SQL for the same reason as `LeasesService.findExpiring`: TypeORM cannot
    * join schema-qualified tables it has no entity for.
@@ -90,14 +91,10 @@ export class RenewalsService {
            ON unit.id = lease."unitId"
          JOIN "${JARVIS_SCHEMA}"."Property" property
            ON property.id = unit."propertyId"
-        WHERE lease."endDate" < ${NOW_UTC}
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM "${JARVIS_SCHEMA}"."Lease" successor
-                 WHERE successor."renewedFromId" = lease.id
-              )
+        WHERE lease.status    = $2
+          AND lease."endDate" < ${NOW_UTC}
         ORDER BY lease."endDate" ASC`,
-      [this.config.expiryScanTimeZone],
+      [this.config.expiryScanTimeZone, ACTIVE],
     );
 
     return rows.map(toOverdueRenewalLeaseDto);

@@ -57,8 +57,8 @@ export class OverdueRenewalsResponseDto {
   @ApiProperty({
     type: [OverdueRenewalLeaseDto],
     description:
-      'Every ended lease with no successor, longest overdue first. Empty ' +
-      'when nothing is waiting on a renewal.',
+      'Every lease still Active past its end date, longest overdue first. ' +
+      'Empty when nothing is waiting on a renewal.',
   })
   leases: OverdueRenewalLeaseDto[];
 }

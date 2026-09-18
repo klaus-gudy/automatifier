@@ -13,9 +13,8 @@ export class RenewalsController {
   @ApiOperation({
     summary: 'Ended leases that have not been renewed',
     description:
-      'Every lease, across all organizations, whose end date has passed and ' +
-      'that no other lease renews (no lease has it as `renewedFromId`) — ' +
-      'longest overdue first.',
+      'Every lease, across all organizations, that jarvis still marks ' +
+      'Active although its end date has passed — longest overdue first.',
   })
   @ApiResponse({ status: HttpStatus.OK, type: OverdueRenewalsResponseDto })
   async findOverdue(): Promise<OverdueRenewalsResponseDto> {
