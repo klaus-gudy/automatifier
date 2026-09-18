@@ -98,6 +98,13 @@ Two things that will bite if forgotten:
 
 ## Log
 
+### 2026-09-18 — Renewals keyed on `Lease.status` (uncommitted)
+
+- jarvis added `Lease.status` (`LeaseStatus`: Upcoming, Active, Ended,
+  Renewed). Mapped on the `Lease` entity as text.
+- `GET /renewals/overdue` now means `status = 'Active' AND endDate < now`,
+  replacing the "no successor via `renewedFromId`" inference.
+
 ### 2026-09-18 — `renewals` module: overdue renewals endpoint (uncommitted)
 
 - `GET /renewals/overdue`: leases whose `endDate` has passed and that no
