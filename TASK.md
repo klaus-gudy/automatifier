@@ -98,6 +98,14 @@ Two things that will bite if forgotten:
 
 ## Log
 
+### 2026-09-18 — `renewals` module: overdue renewals endpoint (uncommitted)
+
+- `GET /renewals/overdue`: leases whose `endDate` has passed and that no
+  other lease renews (`renewedFromId`), with tenant, unit and `daysOverdue`
+  (calendar days in `LEASE_EXPIRY_SCAN_TIMEZONE`), longest overdue first.
+- jarvis's `Lease` has no status column, so "still active" means "has no
+  successor".
+
 ### 2026-09-18 — Calendar day counting, and a "kesho" message (uncommitted)
 
 - **`daysLeft` now counts calendar days in the reminder time zone**, not
