@@ -98,6 +98,12 @@ Two things that will bite if forgotten:
 
 ## Log
 
+### 2026-09-19 — `GET /renewals/vacate` (uncommitted)
+
+- Active leases past their `endDate` whose unit has `autoRenew` off — the
+  complement of `/renewals/auto`. Same shared query, now filtering
+  `autoRenew` as true, false or not at all.
+
 ### 2026-09-19 — `GET /renewals/auto` (uncommitted)
 
 - Active leases past their `endDate` whose unit has `autoRenew` on
