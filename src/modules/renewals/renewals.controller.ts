@@ -1,13 +1,20 @@
-import { Controller, Get, HttpStatus } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
-import { OverdueRenewalsResponseDto } from '@/modules/renewals/dto/overdue-renewals-response.dto';
+import {
+  OverdueRenewalsResponseDto,
+  RenewalScanResultDto,
+} from '@/modules/renewals/dto/overdue-renewals-response.dto';
+import { RenewalScanService } from '@/modules/renewals/renewal-scan.service';
 import { RenewalsService } from '@/modules/renewals/renewals.service';
 
 @ApiTags('renewals')
 @Controller('renewals')
 export class RenewalsController {
-  constructor(private readonly renewals: RenewalsService) {}
+  constructor(
+    private readonly renewals: RenewalsService,
+    private readonly scanner: RenewalScanService,
+  ) {}
 
   @Get('overdue')
   @ApiOperation({
@@ -45,5 +52,23 @@ export class RenewalsController {
   @ApiResponse({ status: HttpStatus.OK, type: OverdueRenewalsResponseDto })
   async findDueForVacating(): Promise<OverdueRenewalsResponseDto> {
     return { leases: await this.renewals.findDueForVacating() };
+  }
+
+  /**
+   * Runs the scheduled scan now, through the same code path. `POST` with a
+   * `200` for the reasons given on `POST /leases/expiring/scan`.
+   */
+  @Post('scan')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Run the renewal scan now',
+    description:
+      'Runs what the daily schedule runs (RENEWAL_SCAN_CRON in ' +
+      'LEASE_EXPIRY_SCAN_TIMEZONE, 08:30 Africa/Dar_es_Salaam by default): ' +
+      'the /renewals/auto and /renewals/vacate searches, logged and returned.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: RenewalScanResultDto })
+  scan(): Promise<RenewalScanResultDto> {
+    return this.scanner.scan('manual');
   }
 }
