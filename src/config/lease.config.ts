@@ -46,6 +46,14 @@ export default registerAs('lease', () => ({
     process.env.LEASE_EXPIRY_SCAN_TIMEZONE?.trim() || 'Africa/Dar_es_Salaam',
 
   /**
+   * When the renewals scan runs — `/renewals/auto` and `/renewals/vacate`,
+   * one after the other. Read in `expiryScanTimeZone`, so both daily jobs
+   * share one clock. 08:30 by default: after the expiry scan rather than on
+   * top of it, so the two blocks do not interleave in the log.
+   */
+  renewalScanCron: process.env.RENEWAL_SCAN_CRON?.trim() || '30 8 * * *',
+
+  /**
    * The queue reminders are published to, **owned by this service and consumed
    * by notifier**. It must match notifier's `RABBITMQ_SMS_QUEUE` exactly:
    * notifier only checks the queue exists, so a mismatch is not a second queue,
