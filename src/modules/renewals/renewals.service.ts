@@ -64,7 +64,7 @@ export class RenewalsService {
    * join schema-qualified tables it has no entity for.
    */
   findOverdue(): Promise<OverdueRenewalLeaseDto[]> {
-    return this.findActivePastEnd(false);
+    return this.findActivePastEnd(null);
   }
 
   /**
@@ -80,12 +80,21 @@ export class RenewalsService {
   }
 
   /**
+   * The other half of `findOverdue`: `autoRenew` off, so nothing will renew
+   * these by itself. The tenant is past their end date with no renewal
+   * coming — the unit has to be vacated or renewed by hand.
+   */
+  findDueForVacating(): Promise<OverdueRenewalLeaseDto[]> {
+    return this.findActivePastEnd(false);
+  }
+
+  /**
    * One query behind both endpoints, so "active and past its end" cannot
-   * drift between them. `$3` is `true` to require `autoRenew`, `false` to
-   * ignore it.
+   * drift between them. `$3` filters on the unit's `autoRenew`: `true` or
+   * `false` to require that value, `null` to ignore it.
    */
   private async findActivePastEnd(
-    autoRenewOnly: boolean,
+    autoRenew: boolean | null,
   ): Promise<OverdueRenewalLeaseDto[]> {
     const rows = await this.leases.manager.query<OverdueRenewalRow[]>(
       `SELECT lease.id                    AS "id",
@@ -118,9 +127,9 @@ export class RenewalsService {
            ON property.id = unit."propertyId"
         WHERE lease.status    = $2
           AND lease."endDate" < ${NOW_UTC}
-          AND (NOT $3 OR unit."autoRenew")
+          AND ($3::boolean IS NULL OR unit."autoRenew" = $3)
         ORDER BY lease."endDate" ASC`,
-      [this.config.expiryScanTimeZone, ACTIVE, autoRenewOnly],
+      [this.config.expiryScanTimeZone, ACTIVE, autoRenew],
     );
 
     return rows.map(toOverdueRenewalLeaseDto);

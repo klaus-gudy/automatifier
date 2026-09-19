@@ -33,4 +33,17 @@ export class RenewalsController {
   async findDueForAutoRenewal(): Promise<OverdueRenewalsResponseDto> {
     return { leases: await this.renewals.findDueForAutoRenewal() };
   }
+
+  @Get('vacate')
+  @ApiOperation({
+    summary: 'Ended leases due for vacating',
+    description:
+      'The same leases as /renewals/overdue — still Active past their end ' +
+      'date — narrowed to those whose unit has autoRenew off. Nothing will ' +
+      'renew these automatically, so the unit is due to be vacated.',
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: OverdueRenewalsResponseDto })
+  async findDueForVacating(): Promise<OverdueRenewalsResponseDto> {
+    return { leases: await this.renewals.findDueForVacating() };
+  }
 }
