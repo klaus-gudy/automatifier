@@ -98,6 +98,13 @@ Two things that will bite if forgotten:
 
 ## Log
 
+### 2026-09-19 — `GET /renewals/auto` (uncommitted)
+
+- Active leases past their `endDate` whose unit has `autoRenew` on
+  (jarvis keeps the flag on `Unit`, not `Lease`).
+- Shares one query with `/renewals/overdue`; both now report `autoRenew`
+  per lease.
+
 ### 2026-09-18 — Renewals keyed on `Lease.status` (uncommitted)
 
 - jarvis added `Lease.status` (`LeaseStatus`: Upcoming, Active, Ended,
