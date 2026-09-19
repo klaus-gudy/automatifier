@@ -70,3 +70,31 @@ export class OverdueRenewalsResponseDto {
   })
   leases: OverdueRenewalLeaseDto[];
 }
+
+export type RenewalScanTrigger = 'scheduled' | 'manual';
+
+export class RenewalScanResultDto {
+  @ApiProperty({ example: 'manual', enum: ['scheduled', 'manual'] })
+  trigger: RenewalScanTrigger;
+
+  @ApiProperty({ example: '2026-09-19T05:30:00.012Z' })
+  scannedAt: Date;
+
+  @ApiProperty({
+    example: '2026-09-20T05:30:00.000Z',
+    description: 'When the scheduled scan runs next, in UTC.',
+  })
+  nextScheduledRunAt: Date;
+
+  @ApiProperty({
+    type: [OverdueRenewalLeaseDto],
+    description: 'What /renewals/auto returned in this run.',
+  })
+  autoRenew: OverdueRenewalLeaseDto[];
+
+  @ApiProperty({
+    type: [OverdueRenewalLeaseDto],
+    description: 'What /renewals/vacate returned in this run.',
+  })
+  vacate: OverdueRenewalLeaseDto[];
+}
