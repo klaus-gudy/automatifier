@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import leaseConfig from '@/config/lease.config';
 import { Lease } from '@/modules/leases/lease.entity';
+import { RenewalScanService } from '@/modules/renewals/renewal-scan.service';
 import { RenewalsController } from '@/modules/renewals/renewals.controller';
 import { RenewalsService } from '@/modules/renewals/renewals.service';
 
@@ -14,6 +15,6 @@ import { RenewalsService } from '@/modules/renewals/renewals.service';
     TypeOrmModule.forFeature([Lease]),
   ],
   controllers: [RenewalsController],
-  providers: [RenewalsService],
+  providers: [RenewalsService, RenewalScanService],
 })
 export class RenewalsModule {}
