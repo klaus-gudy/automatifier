@@ -20,4 +20,17 @@ export class RenewalsController {
   async findOverdue(): Promise<OverdueRenewalsResponseDto> {
     return { leases: await this.renewals.findOverdue() };
   }
+
+  @Get('auto')
+  @ApiOperation({
+    summary: 'Ended leases due for auto-renewal',
+    description:
+      'The same leases as /renewals/overdue — still Active past their end ' +
+      'date — narrowed to those whose unit has autoRenew on. Each is one ' +
+      "jarvis's auto-renewal has not yet renewed.",
+  })
+  @ApiResponse({ status: HttpStatus.OK, type: OverdueRenewalsResponseDto })
+  async findDueForAutoRenewal(): Promise<OverdueRenewalsResponseDto> {
+    return { leases: await this.renewals.findDueForAutoRenewal() };
+  }
 }

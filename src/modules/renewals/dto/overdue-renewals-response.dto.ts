@@ -21,6 +21,14 @@ export class OverdueRenewalLeaseDto {
   @ApiProperty({ type: ExpiringLeaseUnitDto })
   unit: ExpiringLeaseUnitDto;
 
+  @ApiProperty({
+    example: true,
+    description:
+      "The unit's `autoRenew` flag in jarvis — whether this lease is meant " +
+      'to be renewed automatically rather than by hand.',
+  })
+  autoRenew: boolean;
+
   @ApiProperty({ example: '2025-09-01T00:00:00.000Z' })
   startDate: Date;
 

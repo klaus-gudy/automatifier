@@ -40,6 +40,7 @@ interface OverdueRenewalRow {
   roleName: string;
   unitLabel: string;
   propertyName: string;
+  autoRenew: boolean;
 }
 
 @Injectable()
@@ -62,7 +63,30 @@ export class RenewalsService {
    * Raw SQL for the same reason as `LeasesService.findExpiring`: TypeORM cannot
    * join schema-qualified tables it has no entity for.
    */
-  async findOverdue(): Promise<OverdueRenewalLeaseDto[]> {
+  findOverdue(): Promise<OverdueRenewalLeaseDto[]> {
+    return this.findActivePastEnd(false);
+  }
+
+  /**
+   * The subset of `findOverdue` whose unit has `autoRenew` on — the leases
+   * jarvis's auto-renewal should already have picked up, or still has to.
+   *
+   * The flag lives on jarvis's `Unit`, not the `Lease`: it is a standing
+   * choice for whoever rents the unit, so it is read at query time rather than
+   * copied onto the lease.
+   */
+  findDueForAutoRenewal(): Promise<OverdueRenewalLeaseDto[]> {
+    return this.findActivePastEnd(true);
+  }
+
+  /**
+   * One query behind both endpoints, so "active and past its end" cannot
+   * drift between them. `$3` is `true` to require `autoRenew`, `false` to
+   * ignore it.
+   */
+  private async findActivePastEnd(
+    autoRenewOnly: boolean,
+  ): Promise<OverdueRenewalLeaseDto[]> {
     const rows = await this.leases.manager.query<OverdueRenewalRow[]>(
       `SELECT lease.id                    AS "id",
               lease."unitId"              AS "unitId",
@@ -79,6 +103,7 @@ export class RenewalsService {
               tenant_role.name            AS "roleName",
               unit.label                  AS "unitLabel",
               property.name               AS "propertyName",
+              unit."autoRenew"            AS "autoRenew",
               ${DAYS_OVERDUE}             AS "daysOverdue"
          FROM "${JARVIS_SCHEMA}"."Lease" lease
          JOIN "${JARVIS_SCHEMA}"."Membership" membership
@@ -93,8 +118,9 @@ export class RenewalsService {
            ON property.id = unit."propertyId"
         WHERE lease.status    = $2
           AND lease."endDate" < ${NOW_UTC}
+          AND (NOT $3 OR unit."autoRenew")
         ORDER BY lease."endDate" ASC`,
-      [this.config.expiryScanTimeZone, ACTIVE],
+      [this.config.expiryScanTimeZone, ACTIVE, autoRenewOnly],
     );
 
     return rows.map(toOverdueRenewalLeaseDto);
@@ -118,6 +144,7 @@ function toOverdueRenewalLeaseDto(
       label: row.unitLabel,
       propertyName: row.propertyName,
     },
+    autoRenew: row.autoRenew,
     startDate: row.startDate,
     endDate: row.endDate,
     daysOverdue: row.daysOverdue,
