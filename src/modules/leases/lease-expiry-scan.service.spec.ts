@@ -17,6 +17,7 @@ describe('LeaseExpiryScanService', () => {
     expiryDays: [24, 1],
     expiryScanCron: '0 8 * * *',
     expiryScanTimeZone: 'Africa/Dar_es_Salaam',
+    renewalScanCron: '30 8 * * *',
     smsQueue: 'NOTIFIER_SMS_QUEUE',
     smsRoutingKey: 'lease.expiring',
     reminderSweepCron: '*/10 * * * *',
