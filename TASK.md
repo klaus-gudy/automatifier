@@ -98,6 +98,14 @@ Two things that will bite if forgotten:
 
 ## Log
 
+### 2026-09-19 — Daily renewal scan (uncommitted)
+
+- `RenewalScanService` runs the `/renewals/auto` and `/renewals/vacate`
+  searches on `RENEWAL_SCAN_CRON` (default `30 8 * * *`, in
+  `LEASE_EXPIRY_SCAN_TIMEZONE`) and logs both lists.
+- `POST /renewals/scan` runs it on demand.
+- Reads and logs only — no lock across replicas yet.
+
 ### 2026-09-19 — `GET /renewals/vacate` (uncommitted)
 
 - Active leases past their `endDate` whose unit has `autoRenew` off — the
