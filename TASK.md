@@ -16,8 +16,6 @@ as part of feature work.
       the whole `public` schema, including `User.passwordHash`,
       `EmailVerificationToken` and `PasswordResetToken`. Nothing here needs
       them; revoking them needs a column-level grant on `User`.
-- [ ] **`.env.example` line 3 reads `API_PREFIX` with no `=`.** Predates this
-      log; left untouched.
 - [ ] **Writing dates into jarvis's `timestamp` columns is not handled.** The
       UTC fix covers reads only. Needed before this service writes a date.
 - [ ] **`redact()` logs every `Date` as `{}`.** `common/logging/log-format.ts`
@@ -103,6 +101,14 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-20 — `.env` and `.env.example` aligned (uncommitted)
+
+- `.env` was missing the whole `LEASE_SMS_*` / `LEASE_REMINDER_*` /
+  `LEASE_*_ROUTING_KEY` block; added blank, which is what the code already
+  fell back to, so nothing changes at runtime.
+- `.env.example` line 3 fixed: `API_PREFIX` → `API_PREFIX=`.
+- Every variable the code reads now appears in both files, in the same order.
 
 ### 2026-09-20 — `renewal_event` outbox: one event per lease (uncommitted)
 
