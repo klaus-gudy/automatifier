@@ -54,6 +54,20 @@ export default registerAs('lease', () => ({
   renewalScanCron: process.env.RENEWAL_SCAN_CRON?.trim() || '30 8 * * *',
 
   /**
+   * jarvis's lease-lifecycle queue, **owned and consumed by jarvis**, bound
+   * here so renewal events reach it. Bind-only, like `smsQueue`: jarvis
+   * declares it against its own `jarvis.events.dlx`, and re-declaring it here
+   * with a different dead-letter exchange is refused outright.
+   *
+   * jarvis binds it on this exchange as well, so whichever service boots
+   * first, nothing is published into an exchange with nothing bound to it.
+   *
+   * Caps, naming who consumes — the house convention for a queue name.
+   */
+  lifecycleQueue:
+    process.env.LEASE_LIFECYCLE_QUEUE?.trim() || 'LEASE_LIFECYCLE_QUEUE',
+
+  /**
    * Routing keys the renewal scan publishes each lease under, on the event
    * exchange: one event per lease whose unit auto-renews, one per lease whose
    * tenant has to vacate. Lower.dotted, like every routing key here.
