@@ -65,7 +65,8 @@ export class RenewalsController {
     description:
       'Runs what the daily schedule runs (RENEWAL_SCAN_CRON in ' +
       'LEASE_EXPIRY_SCAN_TIMEZONE, 08:30 Africa/Dar_es_Salaam by default): ' +
-      'the /renewals/auto and /renewals/vacate searches, logged and returned.',
+      'the /renewals/auto and /renewals/vacate searches, logged, published ' +
+      'as one lease.renewal or lease.vacating event per lease, and returned.',
   })
   @ApiResponse({ status: HttpStatus.OK, type: RenewalScanResultDto })
   scan(): Promise<RenewalScanResultDto> {

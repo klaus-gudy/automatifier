@@ -5,8 +5,10 @@ import { CronJob } from 'cron';
 
 import { SEPARATOR } from '@/common/logging/log-format';
 import leaseConfig from '@/config/lease.config';
+import { RabbitmqService } from '@/messaging/rabbitmq.service';
 import {
   OverdueRenewalLeaseDto,
+  RenewalPublishTallyDto,
   RenewalScanResultDto,
   RenewalScanTrigger,
 } from '@/modules/renewals/dto/overdue-renewals-response.dto';
@@ -16,14 +18,18 @@ export const RENEWAL_SCAN_JOB = 'renewal-scan';
 
 /**
  * Runs the `/renewals/auto` and `/renewals/vacate` searches on a schedule, and
- * on demand through `POST /renewals/scan`, and logs what each found.
+ * on demand through `POST /renewals/scan`, logs what each found, and publishes
+ * one event per lease: `lease.renewal` for the first list, `lease.vacating`
+ * for the second.
  *
  * Registered through `SchedulerRegistry` for the reasons given on
  * `LeaseExpiryScanService`: a `@Cron` decorator is evaluated before `.env` is
  * read, and a job outside the registry would outlive `app.close()`.
  *
- * Only reads and logs for now, so two replicas running it twice is harmless.
- * Once it acts on what it finds, it needs a lock like the expiry scan does.
+ * **Publishes the same lease again on every run** until jarvis moves it out
+ * of `Active`. There is no outbox or de-duplication here, unlike reminders:
+ * consumers must treat these events as idempotent, keyed on `lease.id`. The
+ * same holds for two replicas, which would each publish every lease.
  */
 @Injectable()
 export class RenewalScanService implements OnModuleInit {
@@ -32,6 +38,7 @@ export class RenewalScanService implements OnModuleInit {
 
   constructor(
     private readonly renewals: RenewalsService,
+    private readonly rabbitmq: RabbitmqService,
     private readonly scheduler: SchedulerRegistry,
     @Inject(leaseConfig.KEY)
     private readonly config: ConfigType<typeof leaseConfig>,
@@ -79,9 +86,22 @@ export class RenewalScanService implements OnModuleInit {
     this.logger.log(`[RENEWAL SCAN] ${trigger}`);
     this.logList('AUTO-RENEW', autoRenew);
     this.logList('VACATE', vacate);
+
+    const renewalEvents = await this.publishEach(
+      this.config.renewalRoutingKey,
+      autoRenew,
+    );
+    const vacatingEvents = await this.publishEach(
+      this.config.vacatingRoutingKey,
+      vacate,
+    );
+
     this.logger.log(
-      `[SCANNED] ${autoRenew.length} to auto-renew, ${vacate.length} to ` +
-        `vacate +${Date.now() - scannedAt.getTime()}ms`,
+      `[SCANNED] ${autoRenew.length} to auto-renew ` +
+        `(${renewalEvents.published} published, ${renewalEvents.failed} failed), ` +
+        `${vacate.length} to vacate ` +
+        `(${vacatingEvents.published} published, ${vacatingEvents.failed} failed) ` +
+        `+${Date.now() - scannedAt.getTime()}ms`,
     );
     this.logger.log(`${SEPARATOR}\n`);
 
@@ -91,7 +111,43 @@ export class RenewalScanService implements OnModuleInit {
       nextScheduledRunAt: this.nextScheduledRunAt(),
       autoRenew,
       vacate,
+      renewalEvents,
+      vacatingEvents,
     };
+  }
+
+  /**
+   * One event per lease, so a consumer can act on — and fail on — each lease
+   * on its own rather than a whole batch at once.
+   *
+   * A failure is logged and counted, not thrown: one lease the broker refused
+   * should not stop the others being published. It is not retried either —
+   * the lease is still Active tomorrow and the next scan publishes it again.
+   */
+  private async publishEach(
+    routingKey: string,
+    leases: OverdueRenewalLeaseDto[],
+  ): Promise<RenewalPublishTallyDto> {
+    // Disabled in config, so nothing to publish to — the scan still logs.
+    if (!this.rabbitmq.isEnabled) return { published: 0, failed: 0 };
+
+    let published = 0;
+    let failed = 0;
+
+    for (const lease of leases) {
+      try {
+        await this.rabbitmq.publish(routingKey, { lease });
+        published += 1;
+      } catch (cause) {
+        failed += 1;
+        this.logger.error(
+          `${routingKey} for lease ${lease.id} failed to publish: ` +
+            `${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    }
+
+    return { published, failed };
   }
 
   private logList(label: string, leases: OverdueRenewalLeaseDto[]): void {
