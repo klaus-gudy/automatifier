@@ -6,6 +6,9 @@ as part of feature work.
 
 ## Open
 
+- [ ] **Nothing consumes `lease.renewal` / `lease.vacating` yet.** The topic
+      exchange drops events with no bound queue; bind a consumer's queue
+      (`RabbitmqService.bindConsumerQueue`) before relying on them.
 - [ ] **Hide credentials from the `automatifier` role (optional).** It can read
       the whole `public` schema, including `User.passwordHash`,
       `EmailVerificationToken` and `PasswordResetToken`. Nothing here needs
@@ -97,6 +100,15 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-19 — Renewal scan publishes events (uncommitted)
+
+- Each run publishes one `lease.renewal` per auto-renew lease and one
+  `lease.vacating` per vacate lease, on the event exchange, body `{ lease }`.
+  Keys configurable (`LEASE_RENEWAL_ROUTING_KEY`, `LEASE_VACATING_ROUTING_KEY`).
+- No outbox: a lease is published again every day it stays Active past its
+  end, and a failed publish is only retried by the next run. Consumers must be
+  idempotent on `lease.id`.
 
 ### 2026-09-19 — Daily renewal scan (uncommitted)
 
