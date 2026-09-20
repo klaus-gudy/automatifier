@@ -6,6 +6,9 @@ as part of feature work.
 
 ## Open
 
+- [ ] **`renewal_event` migration has not been run.** Needs
+      `DATABASE_MIGRATIONS_RUN=true` or a manual run; the `automatifier` role
+      owns its own schema, so no DBA step is needed this time.
 - [ ] **Nothing consumes `lease.renewal` / `lease.vacating` yet.** The topic
       exchange drops events with no bound queue; bind a consumer's queue
       (`RabbitmqService.bindConsumerQueue`) before relying on them.
@@ -100,6 +103,21 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-20 — `renewal_event` outbox: one event per lease (uncommitted)
+
+- New `automatifier.renewal_event` table + migration
+  (`1789891200000-CreateRenewalEvent`), shaped like `lease_reminder`:
+  unique on (`lease_id`, `kind`, `lease_end_date`), `PENDING/PUBLISHED/FAILED`,
+  `attempts`, `payload` as stored jsonb.
+- The scan now records first and publishes only what it inserted, so an
+  overdue lease produces one `lease.renewal`/`lease.vacating` event instead of
+  one per daily run.
+- `RenewalEventSweeperService` retries stuck events on
+  `LEASE_REMINDER_SWEEP_CRON` — without it the unique constraint would also
+  block the retry.
+- Still at-least-once across a crash between the broker's confirm and the
+  `PUBLISHED` update; `event_id` is on the payload for consumers to key on.
 
 ### 2026-09-19 — Renewal scan publishes events (uncommitted)
 
