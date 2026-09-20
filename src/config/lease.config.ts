@@ -54,6 +54,16 @@ export default registerAs('lease', () => ({
   renewalScanCron: process.env.RENEWAL_SCAN_CRON?.trim() || '30 8 * * *',
 
   /**
+   * Routing keys the renewal scan publishes each lease under, on the event
+   * exchange: one event per lease whose unit auto-renews, one per lease whose
+   * tenant has to vacate. Lower.dotted, like every routing key here.
+   */
+  renewalRoutingKey:
+    process.env.LEASE_RENEWAL_ROUTING_KEY?.trim() || 'lease.renewal',
+  vacatingRoutingKey:
+    process.env.LEASE_VACATING_ROUTING_KEY?.trim() || 'lease.vacating',
+
+  /**
    * The queue reminders are published to, **owned by this service and consumed
    * by notifier**. It must match notifier's `RABBITMQ_SMS_QUEUE` exactly:
    * notifier only checks the queue exists, so a mismatch is not a second queue,
