@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -60,7 +60,7 @@ type NewRenewalEvent = Pick<
  * would publish it again.
  */
 @Injectable()
-export class RenewalEventService {
+export class RenewalEventService implements OnModuleInit {
   private readonly logger = new Logger(RenewalEventService.name);
 
   constructor(
@@ -70,6 +70,46 @@ export class RenewalEventService {
     @Inject(leaseConfig.KEY)
     private readonly config: ConfigType<typeof leaseConfig>,
   ) {}
+
+  /**
+   * Binds jarvis's lease-lifecycle queue to this service's exchange, at boot
+   * rather than at the first publish: an event published to an exchange with
+   * nothing bound to it is dropped silently, and the morning scan is a bad
+   * time to discover that.
+   *
+   * Bound, not declared — `LEASE_LIFECYCLE_QUEUE` is jarvis's, created against
+   * `jarvis.events.dlx`, and re-declaring it here with a different dead-letter
+   * exchange is refused with `PRECONDITION_FAILED`. jarvis binds it on this
+   * exchange too, so the binding exists whichever service starts first;
+   * re-binding is idempotent in AMQP, so both doing it costs nothing.
+   *
+   * What jarvis does with the events, so nobody here is tempted to "help":
+   * it reads **only `lease.id`** and re-reads the rest from its own tables,
+   * because this service's snapshot can be days old and a stale rent must
+   * never become the rent on a new lease. Enriching the payload further would
+   * be wasted work. Both handlers are idempotent — a repeated `lease.renewal`
+   * finds the successor already there, a repeated `lease.vacating` matches
+   * nothing, and a `lease.vacating` for a lease since renewed leaves it
+   * `Renewed` — which is what makes the sweeper's at-least-once delivery safe.
+   * An unknown lease id is dead-lettered rather than retried.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.rabbitmq.isEnabled) {
+      this.logger.warn(
+        'RABBITMQ_ENABLED=false — renewal events will be recorded and left ' +
+          'PENDING. Nothing is lost; nothing reaches jarvis either.',
+      );
+      return;
+    }
+
+    await this.rabbitmq.bindConsumerQueue({
+      queue: this.config.lifecycleQueue,
+      routingKeys: [
+        this.config.renewalRoutingKey,
+        this.config.vacatingRoutingKey,
+      ],
+    });
+  }
 
   /** The routing key one kind is published under. */
   routingKeyFor(kind: RenewalEventKind): string {
