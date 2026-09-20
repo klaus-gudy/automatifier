@@ -73,16 +73,37 @@ export class OverdueRenewalsResponseDto {
 
 export type RenewalScanTrigger = 'scheduled' | 'manual';
 
-/** What one scan published, per routing key. */
+/** What one scan did to the outbox, per kind of event. */
 export class RenewalPublishTallyDto {
-  @ApiProperty({ example: 2, description: 'Events the broker confirmed.' })
+  @ApiProperty({
+    example: 2,
+    description: 'Rows recorded this run — the leases not already published.',
+  })
+  created: number;
+
+  @ApiProperty({
+    example: 3,
+    description:
+      'Leases already recorded for this end date, so nothing was written. ' +
+      'The de-duplication doing its job: an overdue lease is published once, ' +
+      'not once a day.',
+  })
+  duplicates: number;
+
+  @ApiProperty({
+    example: 2,
+    description:
+      'Events the broker confirmed during this run — including any left ' +
+      'pending by earlier runs, so this is a whole-outbox figure rather ' +
+      'than a per-kind one.',
+  })
   published: number;
 
   @ApiProperty({
     example: 0,
     description:
-      'Events that failed to publish. Not retried in this run — the lease ' +
-      'is still Active tomorrow, so the next scan publishes it again.',
+      'Events that failed to publish and are left for the sweeper ' +
+      '(LEASE_REMINDER_SWEEP_CRON).',
   })
   failed: number;
 }
