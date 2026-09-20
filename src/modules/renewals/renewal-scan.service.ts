@@ -5,13 +5,12 @@ import { CronJob } from 'cron';
 
 import { SEPARATOR } from '@/common/logging/log-format';
 import leaseConfig from '@/config/lease.config';
-import { RabbitmqService } from '@/messaging/rabbitmq.service';
 import {
   OverdueRenewalLeaseDto,
-  RenewalPublishTallyDto,
   RenewalScanResultDto,
   RenewalScanTrigger,
 } from '@/modules/renewals/dto/overdue-renewals-response.dto';
+import { RenewalEventService } from '@/modules/renewals/renewal-event.service';
 import { RenewalsService } from '@/modules/renewals/renewals.service';
 
 export const RENEWAL_SCAN_JOB = 'renewal-scan';
@@ -26,10 +25,11 @@ export const RENEWAL_SCAN_JOB = 'renewal-scan';
  * `LeaseExpiryScanService`: a `@Cron` decorator is evaluated before `.env` is
  * read, and a job outside the registry would outlive `app.close()`.
  *
- * **Publishes the same lease again on every run** until jarvis moves it out
- * of `Active`. There is no outbox or de-duplication here, unlike reminders:
- * consumers must treat these events as idempotent, keyed on `lease.id`. The
- * same holds for two replicas, which would each publish every lease.
+ * Each lease is published **once**, not once per run: the scan records into
+ * `renewal_event` first and publishes only the rows it actually inserted, so a
+ * lease that stays overdue for a week still produces one event. Two replicas
+ * scanning at the same moment are safe for the same reason — the unique
+ * constraint decides, not either process.
  */
 @Injectable()
 export class RenewalScanService implements OnModuleInit {
@@ -38,7 +38,7 @@ export class RenewalScanService implements OnModuleInit {
 
   constructor(
     private readonly renewals: RenewalsService,
-    private readonly rabbitmq: RabbitmqService,
+    private readonly events: RenewalEventService,
     private readonly scheduler: SchedulerRegistry,
     @Inject(leaseConfig.KEY)
     private readonly config: ConfigType<typeof leaseConfig>,
@@ -87,20 +87,26 @@ export class RenewalScanService implements OnModuleInit {
     this.logList('AUTO-RENEW', autoRenew);
     this.logList('VACATE', vacate);
 
-    const renewalEvents = await this.publishEach(
-      this.config.renewalRoutingKey,
-      autoRenew,
-    );
-    const vacatingEvents = await this.publishEach(
-      this.config.vacatingRoutingKey,
-      vacate,
-    );
+    /*
+     * Recorded first, published second, and never the other way round — the
+     * rule the reminders follow, for the same reason: a row nobody published
+     * is retried by the sweeper, while a message with no row behind it is one
+     * nobody can account for.
+     */
+    const recordedRenewals = await this.events.recordFor('RENEWAL', autoRenew);
+    const recordedVacating = await this.events.recordFor('VACATING', vacate);
+    const publishedNow = await this.events.publishPending();
+
+    const renewalEvents = { ...recordedRenewals, ...publishedNow };
+    const vacatingEvents = { ...recordedVacating, ...publishedNow };
 
     this.logger.log(
       `[SCANNED] ${autoRenew.length} to auto-renew ` +
-        `(${renewalEvents.published} published, ${renewalEvents.failed} failed), ` +
+        `(${recordedRenewals.created} new, ${recordedRenewals.duplicates} already recorded), ` +
         `${vacate.length} to vacate ` +
-        `(${vacatingEvents.published} published, ${vacatingEvents.failed} failed) ` +
+        `(${recordedVacating.created} new, ${recordedVacating.duplicates} already recorded) ` +
+        `— ${publishedNow.published} event(s) published, ` +
+        `${publishedNow.failed} left for the sweeper ` +
         `+${Date.now() - scannedAt.getTime()}ms`,
     );
     this.logger.log(`${SEPARATOR}\n`);
@@ -114,40 +120,6 @@ export class RenewalScanService implements OnModuleInit {
       renewalEvents,
       vacatingEvents,
     };
-  }
-
-  /**
-   * One event per lease, so a consumer can act on — and fail on — each lease
-   * on its own rather than a whole batch at once.
-   *
-   * A failure is logged and counted, not thrown: one lease the broker refused
-   * should not stop the others being published. It is not retried either —
-   * the lease is still Active tomorrow and the next scan publishes it again.
-   */
-  private async publishEach(
-    routingKey: string,
-    leases: OverdueRenewalLeaseDto[],
-  ): Promise<RenewalPublishTallyDto> {
-    // Disabled in config, so nothing to publish to — the scan still logs.
-    if (!this.rabbitmq.isEnabled) return { published: 0, failed: 0 };
-
-    let published = 0;
-    let failed = 0;
-
-    for (const lease of leases) {
-      try {
-        await this.rabbitmq.publish(routingKey, { lease });
-        published += 1;
-      } catch (cause) {
-        failed += 1;
-        this.logger.error(
-          `${routingKey} for lease ${lease.id} failed to publish: ` +
-            `${cause instanceof Error ? cause.message : String(cause)}`,
-        );
-      }
-    }
-
-    return { published, failed };
   }
 
   private logList(label: string, leases: OverdueRenewalLeaseDto[]): void {
