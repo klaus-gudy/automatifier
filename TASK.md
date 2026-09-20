@@ -9,9 +9,6 @@ as part of feature work.
 - [ ] **`renewal_event` migration has not been run.** Needs
       `DATABASE_MIGRATIONS_RUN=true` or a manual run; the `automatifier` role
       owns its own schema, so no DBA step is needed this time.
-- [ ] **Nothing consumes `lease.renewal` / `lease.vacating` yet.** The topic
-      exchange drops events with no bound queue; bind a consumer's queue
-      (`RabbitmqService.bindConsumerQueue`) before relying on them.
 - [ ] **Hide credentials from the `automatifier` role (optional).** It can read
       the whole `public` schema, including `User.passwordHash`,
       `EmailVerificationToken` and `PasswordResetToken`. Nothing here needs
@@ -101,6 +98,20 @@ Two things that will bite if forgotten:
   publishing, and the snapshot records what was actually sent.
 
 ## Log
+
+### 2026-09-20 — jarvis consumes the lifecycle events (uncommitted)
+
+- `RenewalEventService.onModuleInit` binds `LEASE_LIFECYCLE_QUEUE` (jarvis's,
+  `LEASE_LIFECYCLE_QUEUE` in env) to `automatifier.events` for
+  `lease.renewal` and `lease.vacating` — bind-only, as with
+  `NOTIFIER_SMS_QUEUE`. jarvis binds it too, so boot order does not matter.
+- jarvis reads only `lease.id` and re-reads the rest from its own tables, so
+  the payload snapshot deliberately stays as it is. Its handlers are
+  idempotent, which is what makes the sweeper's at-least-once delivery safe;
+  an unknown lease id is dead-lettered, not retried.
+- `lease.renewal` writes the successor and marks the old lease `Renewed`;
+  `lease.vacating` marks it `Ended`. A unit re-let by hand before the event
+  arrives is closed rather than renewed.
 
 ### 2026-09-20 — `.env` and `.env.example` aligned (uncommitted)
 
