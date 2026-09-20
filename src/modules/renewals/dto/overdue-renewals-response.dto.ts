@@ -73,6 +73,20 @@ export class OverdueRenewalsResponseDto {
 
 export type RenewalScanTrigger = 'scheduled' | 'manual';
 
+/** What one scan published, per routing key. */
+export class RenewalPublishTallyDto {
+  @ApiProperty({ example: 2, description: 'Events the broker confirmed.' })
+  published: number;
+
+  @ApiProperty({
+    example: 0,
+    description:
+      'Events that failed to publish. Not retried in this run — the lease ' +
+      'is still Active tomorrow, so the next scan publishes it again.',
+  })
+  failed: number;
+}
+
 export class RenewalScanResultDto {
   @ApiProperty({ example: 'manual', enum: ['scheduled', 'manual'] })
   trigger: RenewalScanTrigger;
@@ -97,4 +111,16 @@ export class RenewalScanResultDto {
     description: 'What /renewals/vacate returned in this run.',
   })
   vacate: OverdueRenewalLeaseDto[];
+
+  @ApiProperty({
+    type: RenewalPublishTallyDto,
+    description: 'lease.renewal events, one per autoRenew lease.',
+  })
+  renewalEvents: RenewalPublishTallyDto;
+
+  @ApiProperty({
+    type: RenewalPublishTallyDto,
+    description: 'lease.vacating events, one per vacate lease.',
+  })
+  vacatingEvents: RenewalPublishTallyDto;
 }
