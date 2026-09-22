@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.git
+.env*
+*.pem
+*.key
+*.log
+*.tsbuildinfo
+.DS_Store
+.agents
+.claude
+.codex
+.windsurf
